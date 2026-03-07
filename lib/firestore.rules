@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    match /mangas/{mangaId} {
+      allow read: if true;
+
+      // TEMPORÁRIO: permite importadores client-side funcionarem
+      allow create, update, delete: if signedIn();
+
+      match /chapters/{chapterId} {
+        allow read: if true;
+
+        // TEMPORÁRIO: permite importadores client-side funcionarem
+        allow create, update, delete: if signedIn();
+
+        match /comments/{commentId} {
+          allow read: if true;
+
+          allow create: if signedIn()
+            && request.resource.data.uid == request.auth.uid
+            && request.resource.data.text is string
+            && request.resource.data.text.size() > 0
+            && request.resource.data.text.size() <= 800;
+
+          allow delete: if signedIn()
+            && resource.data.uid == request.auth.uid;
+
+          allow update: if false;
+        }
+      }
+    }
+
+    match /users/{uid} {
+      allow read, update, delete: if isOwner(uid);
+      allow create: if isOwner(uid);
+
+      match /favorites/{mangaId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      match /history/{mangaId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+  }
+}
