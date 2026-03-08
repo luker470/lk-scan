@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
-import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
+import { onAuthStateChanged, signInAnonymously, type User, type Auth } from "firebase/auth";
 
 interface AuthContextType {
   user: User | null;
@@ -20,13 +20,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const triedAnonRef = useRef(false);
 
   useEffect(() => {
-    // se auth não existir, não quebra build nem tela
     if (!auth) {
       setLoading(false);
       return;
     }
 
-    const unsub = onAuthStateChanged(auth, async (u) => {
+    const safeAuth: Auth = auth;
+
+    const unsub = onAuthStateChanged(safeAuth, async (u) => {
       setUser(u ?? null);
 
       if (u) {
@@ -38,9 +39,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         triedAnonRef.current = true;
 
         try {
-          await signInAnonymously(auth);
-        } catch (e: any) {
-          const code = e?.code || "";
+          await signInAnonymously(safeAuth);
+        } catch (error: unknown) {
+          const code =
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            typeof (error as { code?: unknown }).code === "string"
+              ? (error as { code: string }).code
+              : "";
 
           if (code === "auth/admin-restricted-operation") {
             console.error(
@@ -51,7 +58,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               "[AUTH] API key inválida. Confira as variáveis NEXT_PUBLIC_FIREBASE_* no Vercel."
             );
           } else {
-            console.error("[AUTH] Anonymous sign-in failed:", e);
+            console.error("[AUTH] Anonymous sign-in failed:", error);
           }
         }
       }
@@ -62,7 +69,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     return () => unsub();
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading }}>
+      {children}
+    </AuthContext.Provider>
+  );
 };
 
 export const useAuth = () => useContext(AuthContext);

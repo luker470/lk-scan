@@ -6,10 +6,14 @@ function getPrivateKey() {
   const key = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
   if (!key) return undefined;
 
-  // remove aspas externas caso tenham sido coladas no Vercel
-  const cleaned = key.trim().replace(/^"(.*)"$/s, "$1");
+  // remove aspas externas se existirem
+  let cleaned = key.trim();
 
-  // converte \n em quebra real de linha
+  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.slice(1, -1);
+  }
+
+  // converte \n em quebra real
   return cleaned.replace(/\\n/g, "\n");
 }
 
