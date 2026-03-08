@@ -54,7 +54,6 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
   const [hasMore, setHasMore] = useState(true);
   const lastDocRef = useRef<QueryDocumentSnapshot<DocumentData> | null>(null);
 
-  // debounce da busca (evita re-render excessivo enquanto digita)
   useEffect(() => {
     const t = setTimeout(() => setDebounced(qtxt.trim().toLowerCase()), 250);
     return () => clearTimeout(t);
@@ -72,19 +71,27 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
     }
 
     try {
+      if (!db) {
+        setList([]);
+        setHasMore(false);
+        return;
+      }
+
       const colRef = collection(db, "mangas");
 
-      // ✅ tentativa 1: orderBy updatedAt (melhor pro Admin)
       let q1 = query(colRef, orderBy("updatedAt", "desc"), limit(PAGE_SIZE));
-      if (!reset && lastDocRef.current) q1 = query(q1, startAfter(lastDocRef.current));
+      if (!reset && lastDocRef.current) {
+        q1 = query(colRef, orderBy("updatedAt", "desc"), startAfter(lastDocRef.current), limit(PAGE_SIZE));
+      }
 
       let snap;
       try {
         snap = await getDocs(q1);
       } catch {
-        // ✅ fallback: se updatedAt não existir em docs antigos
         let q2 = query(colRef, orderBy("createdAt", "desc"), limit(PAGE_SIZE));
-        if (!reset && lastDocRef.current) q2 = query(q2, startAfter(lastDocRef.current));
+        if (!reset && lastDocRef.current) {
+          q2 = query(colRef, orderBy("createdAt", "desc"), startAfter(lastDocRef.current), limit(PAGE_SIZE));
+        }
         snap = await getDocs(q2);
       }
 
@@ -96,6 +103,10 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
 
       lastDocRef.current = docs.length ? docs[docs.length - 1] : lastDocRef.current;
       setHasMore(docs.length === PAGE_SIZE);
+    } catch (error) {
+      console.error("Erro ao carregar lista de mangás:", error);
+      if (reset) setList([]);
+      setHasMore(false);
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -119,7 +130,6 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
   }, [list, debounced]);
 
   const stats = useMemo(() => {
-    // só pra exibir uma “data” de ordenação / info útil
     const getScore = (m: Manga) => {
       const u = tsSeconds(m.updatedAt);
       const c = tsSeconds(m.createdAt);
@@ -139,7 +149,6 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
 
   return (
     <div className="space-y-4">
-      {/* BUSCA + AÇÕES */}
       <div className="flex flex-col md:flex-row gap-3">
         <input
           value={qtxt}
@@ -167,7 +176,6 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
         ) : null}
       </div>
 
-      {/* GRID */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map((m) => {
           const last =
@@ -243,7 +251,6 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
         })}
       </div>
 
-      {/* PAGINAÇÃO */}
       <div className="pt-2 flex justify-center">
         {hasMore ? (
           <button
