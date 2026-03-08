@@ -37,15 +37,26 @@ export default function Home() {
 
   useEffect(() => {
     async function fetchMangas() {
-      const q = query(collection(db, "mangas"), orderBy("createdAt", "desc"));
-      const snap = await getDocs(q);
+      // ✅ evita quebrar no build/browser sem config
+      if (!db) {
+        setMangas([]);
+        return;
+      }
 
-      const data: Manga[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Manga, "id">),
-      }));
+      try {
+        const q = query(collection(db, "mangas"), orderBy("createdAt", "desc"));
+        const snap = await getDocs(q);
 
-      setMangas(data);
+        const data: Manga[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Manga, "id">),
+        }));
+
+        setMangas(data);
+      } catch (e) {
+        console.error("Erro ao carregar mangas:", e);
+        setMangas([]);
+      }
     }
 
     fetchMangas();
@@ -90,6 +101,7 @@ export default function Home() {
     return [...mangas].sort((a, b) => (b.views ?? 0) - (a.views ?? 0)).slice(0, 10);
   }, [mangas]);
 
+  // ✅ passo 5 incluído: top da semana
   const topWeek = useMemo(() => {
     return [...mangas].sort((a, b) => (b.weekViews ?? 0) - (a.weekViews ?? 0)).slice(0, 10);
   }, [mangas]);

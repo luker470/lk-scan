@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
-import { onAuthStateChanged, User, signInAnonymously } from "firebase/auth";
+import { onAuthStateChanged, signInAnonymously, User } from "firebase/auth";
 
 interface AuthContextType {
   user: User | null;
@@ -17,35 +17,42 @@ const AuthContext = createContext<AuthContextType>({
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-
-  // ✅ evita tentar sign-in repetidamente
   const triedAnonRef = useRef(false);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (u) => {
-      setUser(u || null);
+    // se auth não existir, não quebra build nem tela
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
 
-      // se já tem user, acabou
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      setUser(u ?? null);
+
       if (u) {
         setLoading(false);
         return;
       }
 
-      // se não tem key, nem tenta
-      const hasApiKey = !!process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
-      if (!hasApiKey) {
-        console.error("[AUTH] NEXT_PUBLIC_FIREBASE_API_KEY está vazia/undefined. Cancelando login anônimo.");
-        setLoading(false);
-        return;
-      }
-
-      // tenta uma vez
       if (!triedAnonRef.current) {
         triedAnonRef.current = true;
+
         try {
           await signInAnonymously(auth);
-        } catch (e) {
-          console.error("Anonymous sign-in failed:", e);
+        } catch (e: any) {
+          const code = e?.code || "";
+
+          if (code === "auth/admin-restricted-operation") {
+            console.error(
+              "[AUTH] Login anônimo desativado. Ative em Firebase > Authentication > Método de login > Anônimo."
+            );
+          } else if (code === "auth/invalid-api-key") {
+            console.error(
+              "[AUTH] API key inválida. Confira as variáveis NEXT_PUBLIC_FIREBASE_* no Vercel."
+            );
+          } else {
+            console.error("[AUTH] Anonymous sign-in failed:", e);
+          }
         }
       }
 

@@ -1,53 +1,45 @@
 // lib/firebase.ts
-import { initializeApp, getApps, getApp, deleteApp, FirebaseApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { FirebaseApp, getApp, getApps, initializeApp } from "firebase/app";
+import { Auth, getAuth } from "firebase/auth";
+import { Firestore, getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY as string | undefined,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN as string | undefined,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID as string | undefined,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET as string | undefined,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID as string | undefined,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID as string | undefined,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID as string | undefined,
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
 };
 
-function warnIfMissing() {
-  const missing = Object.entries(firebaseConfig)
-    .filter(([, v]) => !v)
-    .map(([k]) => k);
+function hasValidClientConfig() {
+  return !!(
+    firebaseConfig.apiKey &&
+    firebaseConfig.authDomain &&
+    firebaseConfig.projectId &&
+    firebaseConfig.storageBucket &&
+    firebaseConfig.messagingSenderId &&
+    firebaseConfig.appId
+  );
+}
 
-  if (missing.length) {
+let app: FirebaseApp | null = null;
+let auth: Auth | null = null;
+let db: Firestore | null = null;
+
+// ✅ Só inicializa no navegador.
+// Isso evita quebrar o build/prerender do Vercel.
+if (typeof window !== "undefined") {
+  if (!hasValidClientConfig()) {
     console.error(
-      `[FIREBASE] Variáveis ausentes: ${missing.join(", ")}. Confira .env.local e REINICIE o npm run dev.`
+      "[FIREBASE] Variáveis ausentes: apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId, measurementId. Confira as envs no Vercel."
     );
+  } else {
+    app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
   }
 }
 
-warnIfMissing();
-
-let app: FirebaseApp;
-
-if (!getApps().length) {
-  app = initializeApp(firebaseConfig);
-} else {
-  app = getApp();
-
-  // ✅ DEV FIX: se o app foi criado com apiKey errada/undefined por HMR,
-  // recria quando detectar mudança.
-  const currentKey = app.options.apiKey;
-  const wantedKey = firebaseConfig.apiKey;
-
-  if (process.env.NODE_ENV === "development" && wantedKey && currentKey !== wantedKey) {
-    try {
-      await deleteApp(app);
-    } catch {
-      // ignore
-    }
-    app = initializeApp(firebaseConfig);
-  }
-}
-
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+export { app, auth, db };
