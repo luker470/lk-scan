@@ -41,6 +41,13 @@ export default function ChapterClient({
       setLoading(true);
 
       try {
+        if (!db) {
+          console.error("Firestore não inicializado");
+          setTitle("Capítulo não encontrado");
+          setPages([]);
+          return;
+        }
+
         const mangaRef = doc(db, "mangas", mangaId);
         const mangaSnap = await getDoc(mangaRef);
 

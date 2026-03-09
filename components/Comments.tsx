@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  serverTimestamp,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 
@@ -32,17 +42,26 @@ export default function Comments({
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  const colRef = useMemo(
-    () => collection(db, "mangas", mangaId, "chapters", chapterId, "comments"),
-    [mangaId, chapterId]
-  );
+  const colRef = useMemo(() => {
+    if (!db) return null;
+    return collection(db, "mangas", mangaId, "chapters", chapterId, "comments");
+  }, [mangaId, chapterId]);
 
   async function load() {
+    if (!colRef) {
+      setLoading(false);
+      setItems([]);
+      return;
+    }
+
     setLoading(true);
     try {
       const q = query(colRef, orderBy("createdAt", "desc"), limit(50));
       const snap = await getDocs(q);
       setItems(snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
+    } catch (e) {
+      console.error(e);
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -51,10 +70,12 @@ export default function Comments({
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mangaId, chapterId]);
+  }, [mangaId, chapterId, colRef]);
 
   async function send() {
     if (!user) return alert("Aguardando login...");
+    if (!colRef) return alert("Firebase não inicializado.");
+
     const t = text.trim();
     if (!t) return;
     if (t.length > 800) return alert("Comentário muito grande (máx 800).");
@@ -78,6 +99,8 @@ export default function Comments({
 
   async function removeComment(id: string) {
     if (!user) return;
+    if (!db) return alert("Firebase não inicializado.");
+
     const ok = confirm("Apagar comentário?");
     if (!ok) return;
 

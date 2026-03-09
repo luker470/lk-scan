@@ -36,6 +36,13 @@ export default function MangaClient({ id }: { id: string }) {
       setLoading(true);
 
       try {
+        if (!db) {
+          console.error("Firestore não inicializado");
+          setManga(null);
+          setChapters([]);
+          return;
+        }
+
         const ref = doc(db, "mangas", id);
         const snap = await getDoc(ref);
 
