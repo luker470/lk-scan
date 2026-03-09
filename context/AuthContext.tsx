@@ -2,7 +2,12 @@
 
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { auth } from "@/lib/firebase";
-import { onAuthStateChanged, signInAnonymously, type User, type Auth } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInAnonymously,
+  type User,
+  type Auth,
+} from "firebase/auth";
 
 interface AuthContextType {
   user: User | null;
@@ -14,13 +19,18 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
 });
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+export const AuthProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const triedAnonRef = useRef(false);
 
   useEffect(() => {
     if (!auth) {
+      console.error("[AUTH] Firebase Auth não inicializado.");
       setLoading(false);
       return;
     }
@@ -58,7 +68,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               "[AUTH] API key inválida. Confira as variáveis NEXT_PUBLIC_FIREBASE_* no Vercel."
             );
           } else {
-            console.error("[AUTH] Anonymous sign-in failed:", error);
+            console.error("[AUTH] Falha no login anônimo:", error);
           }
         }
       }
