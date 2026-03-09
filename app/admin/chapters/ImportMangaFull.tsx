@@ -23,6 +23,7 @@ function sortByTrailingNumber(urls: string[]) {
     const m = clean.match(/(\d+)\.(jpe?g|png|webp|gif)$/i);
     return m ? parseInt(m[1], 10) : Number.POSITIVE_INFINITY;
   };
+
   return [...urls].sort((a, b) => {
     const na = num(a);
     const nb = num(b);
@@ -38,7 +39,11 @@ function normalizeChapterId(rawId: string) {
   return String(n).padStart(3, "0");
 }
 
-type ParsedChapter = { chapterId: string; title?: string; urls: string[] };
+type ParsedChapter = {
+  chapterId: string;
+  title?: string;
+  urls: string[];
+};
 
 function parseManual(text: string): ParsedChapter[] {
   const blocks = text.split(/#CHAPTER/i).map((b) => b.trim()).filter(Boolean);
@@ -54,7 +59,11 @@ function parseManual(text: string): ParsedChapter[] {
     const urls = sortByTrailingNumber(Array.from(new Set(extractUrls(rest).filter(isImageUrl))));
     if (urls.length === 0) continue;
 
-    result.push({ chapterId, title: header || `Capítulo ${chapterId}`, urls });
+    result.push({
+      chapterId,
+      title: header || `Capítulo ${chapterId}`,
+      urls,
+    });
   }
 
   return result;
@@ -97,7 +106,11 @@ function parseAuto(text: string, startChapter: number): ParsedChapter[] {
     const sortedUrls = sortByTrailingNumber(map.get(folder) || []);
     if (sortedUrls.length === 0) return;
 
-    result.push({ chapterId, title: `Capítulo ${chapterId}`, urls: sortedUrls });
+    result.push({
+      chapterId,
+      title: `Capítulo ${chapterId}`,
+      urls: sortedUrls,
+    });
   });
 
   return result;
@@ -122,6 +135,7 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
   }, [raw, mode, startChapter]);
 
   async function getExistingChapterIds() {
+    if (!db) return new Set<string>();
     const snap = await getDocs(collection(db, "mangas", mangaId, "chapters"));
     return new Set(snap.docs.map((d) => d.id));
   }
@@ -130,16 +144,27 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
     setOk(null);
     setErr(null);
 
-    if (!mangaId) return setErr("mangaId ausente.");
+    if (!db) {
+      setErr("❌ Firebase não inicializado. Confira as variáveis NEXT_PUBLIC_FIREBASE_* no Vercel.");
+      return;
+    }
+
+    if (!mangaId) {
+      setErr("mangaId ausente.");
+      return;
+    }
+
     if (chapters.length === 0) {
-      return setErr(
+      setErr(
         mode === "manual"
           ? "Nenhum capítulo detectado. Use #CHAPTER 001 etc."
           : "Nenhum link válido detectado (precisa ser link direto .jpg/.png/.webp)."
       );
+      return;
     }
 
     setLoading(true);
+
     try {
       const existing = await getExistingChapterIds();
 
@@ -172,7 +197,6 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
         );
       }
 
-      // Recalcula chaptersCount real
       const after = await getDocs(collection(db, "mangas", mangaId, "chapters"));
       const realCount = after.size;
 
@@ -182,7 +206,9 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
         lastChapterNumber: maxChapter || 0,
       }).catch(() => {});
 
-      setOk(`✅ Importado: ${importedChapters} capítulos / ${totalPages} páginas. (Total no mangá: ${realCount})`);
+      setOk(
+        `✅ Importado: ${importedChapters} capítulos / ${totalPages} páginas. (Total no mangá: ${realCount})`
+      );
       setRaw("");
     } catch (e: any) {
       console.error(e);
@@ -231,7 +257,9 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
               onChange={(e) => setStartChapter(Number(e.target.value))}
               className="mt-2 w-full rounded-xl bg-zinc-800/70 p-2 outline-none border border-zinc-700 focus:border-cyan-400"
             />
-            <div className="mt-1 text-xs text-zinc-500">Se começar em 1, cria 001, 002, 003... (um capítulo por pasta)</div>
+            <div className="mt-1 text-xs text-zinc-500">
+              Se começar em 1, cria 001, 002, 003... (um capítulo por pasta)
+            </div>
           </label>
         )}
 

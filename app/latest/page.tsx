@@ -35,6 +35,11 @@ export default function LatestPage() {
       setLoading(true);
 
       try {
+        if (!db) {
+          setItems([]);
+          return;
+        }
+
         const mangasSnap = await getDocs(
           query(collection(db, "mangas"), orderBy("updatedAt", "desc"))
         );

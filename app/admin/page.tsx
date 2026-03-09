@@ -49,8 +49,6 @@ function TabButton({
 
 export default function AdminPage() {
   const [tab, setTab] = useState<TabKey>("usar");
-
-  // token admin (1 vez)
   const [adminToken, setAdminToken] = useState("");
 
   const [title, setTitle] = useState("");
@@ -68,8 +66,20 @@ export default function AdminPage() {
     const g = genre.trim();
     const c = coverUrl.trim();
 
-    if (!t || !g || !c) return alert("Preencha Título, Gênero e LINK da capa.");
-    if (!isValidHttpUrl(c)) return alert("Link da capa inválido. Precisa começar com http:// ou https://");
+    if (!db) {
+      alert("❌ Firebase não inicializado. Confira as variáveis NEXT_PUBLIC_FIREBASE_* no Vercel.");
+      return;
+    }
+
+    if (!t || !g || !c) {
+      alert("Preencha Título, Gênero e LINK da capa.");
+      return;
+    }
+
+    if (!isValidHttpUrl(c)) {
+      alert("Link da capa inválido. Precisa começar com http:// ou https://");
+      return;
+    }
 
     setLoading(true);
     try {
@@ -124,7 +134,6 @@ export default function AdminPage() {
 
   async function handleEditManga() {
     if (!mangaIdToUse) return;
-
     if (!adminToken) return alert("Cole o ADMIN_SYNC_TOKEN no topo do Admin.");
 
     const res = await fetch("/api/admin/manga", {
@@ -169,7 +178,11 @@ export default function AdminPage() {
               <div className="text-xl font-bold text-cyan-400">⚙️ Painel Admin</div>
               <div className="text-sm text-zinc-400">
                 MangaId em uso:{" "}
-                {mangaIdToUse ? <b className="text-cyan-300">{mangaIdToUse}</b> : <span className="text-zinc-400">nenhum</span>}
+                {mangaIdToUse ? (
+                  <b className="text-cyan-300">{mangaIdToUse}</b>
+                ) : (
+                  <span className="text-zinc-400">nenhum</span>
+                )}
               </div>
             </div>
 
@@ -214,7 +227,9 @@ export default function AdminPage() {
                 placeholder="Cole aqui o ADMIN_SYNC_TOKEN do .env"
                 className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
               />
-              <div className="text-[11px] text-zinc-500 mt-1">Usado para Editar/Excluir e Import por URL.</div>
+              <div className="text-[11px] text-zinc-500 mt-1">
+                Usado para Editar/Excluir e Import por URL.
+              </div>
             </div>
 
             <div className="rounded-2xl border border-zinc-800 bg-black/40 p-3">
@@ -232,7 +247,9 @@ export default function AdminPage() {
           <div className="space-y-6">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
               <h2 className="text-xl font-bold text-cyan-400">🔑 Usar MangaId existente</h2>
-              <p className="text-sm text-zinc-400">Cole um MangaId e clique em <b>Usar</b> ou selecione um mangá na lista abaixo.</p>
+              <p className="text-sm text-zinc-400">
+                Cole um MangaId e clique em <b>Usar</b> ou selecione um mangá na lista abaixo.
+              </p>
 
               <div className="flex flex-col md:flex-row gap-3">
                 <input
@@ -311,7 +328,9 @@ export default function AdminPage() {
               </div>
             ) : (
               <>
-                <p className="text-sm text-zinc-400">Campos opcionais. Preencha só o que quiser mudar.</p>
+                <p className="text-sm text-zinc-400">
+                  Campos opcionais. Preencha só o que quiser mudar.
+                </p>
 
                 <div className="grid md:grid-cols-3 gap-3">
                   <input
@@ -367,17 +386,23 @@ export default function AdminPage() {
             ) : (
               <div className="grid lg:grid-cols-3 gap-6">
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-                  <h2 className="text-xl font-bold mb-4 text-cyan-400">📄 Importar 1 capítulo (colar links)</h2>
+                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
+                    📄 Importar 1 capítulo (colar links)
+                  </h2>
                   <ImportChapterLinks mangaId={mangaIdToUse} />
                 </div>
 
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-                  <h2 className="text-xl font-bold mb-4 text-cyan-400">📚 Importar tudo (colar links)</h2>
+                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
+                    📚 Importar tudo (colar links)
+                  </h2>
                   <ImportMangaFull mangaId={mangaIdToUse} />
                 </div>
 
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-                  <h2 className="text-xl font-bold mb-4 text-cyan-400">⚡ Importar automático (por URL)</h2>
+                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
+                    ⚡ Importar automático (por URL)
+                  </h2>
                   <ImportAutoFromUrl mangaId={mangaIdToUse} adminToken={adminToken} />
                 </div>
               </div>
