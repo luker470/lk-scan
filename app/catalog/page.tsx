@@ -50,6 +50,11 @@ export default function CatalogPage() {
       setLoading(true);
 
       try {
+        if (!db) {
+          setItems([]);
+          return;
+        }
+
         const snap = await getDocs(
           query(collection(db, "mangas"), orderBy("createdAt", "desc"))
         );
@@ -62,6 +67,7 @@ export default function CatalogPage() {
         setItems(list);
       } catch (e) {
         console.error("Erro ao carregar catálogo:", e);
+        setItems([]);
       } finally {
         setLoading(false);
       }
