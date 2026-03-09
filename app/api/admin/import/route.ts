@@ -5,9 +5,11 @@ import admin from "firebase-admin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+import { ADMIN_UID } from "@/lib/admin";
+
 function isAuthed(req: Request) {
-  const token = req.headers.get("x-admin-token");
-  return token && token === process.env.ADMIN_SYNC_TOKEN;
+  const uid = req.headers.get("x-user-id");
+  return uid === ADMIN_UID;
 }
 
 function pad3(n: number) {
