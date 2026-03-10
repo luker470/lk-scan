@@ -39,21 +39,21 @@ export default function FavoritesPage() {
     if (!loading) load();
   }, [user?.uid, loading]);
 
-  if (loading || pageLoading) {
-    return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center">
-        Carregando favoritos...
-      </main>
-    );
-  }
+  if (loading) {
+  return (
+    <main className="min-h-screen bg-black text-white flex items-center justify-center">
+      Carregando...
+    </main>
+  );
+}
 
-  if (!user) {
-    return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
-        Aguarde o login anônimo para acessar seus favoritos.
-      </main>
-    );
-  }
+if (!user) {
+  return (
+    <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+      Faça login para acessar seus favoritos.
+    </main>
+  );
+}
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white p-6">
