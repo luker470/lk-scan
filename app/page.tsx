@@ -37,26 +37,17 @@ export default function Home() {
 
   useEffect(() => {
     async function fetchMangas() {
-      // ✅ evita quebrar no build/browser sem config
-      if (!db) {
-        setMangas([]);
-        return;
-      }
+      if (!db) return;
 
-      try {
-        const q = query(collection(db, "mangas"), orderBy("createdAt", "desc"));
-        const snap = await getDocs(q);
+      const q = query(collection(db, "mangas"), orderBy("createdAt", "desc"));
+      const snap = await getDocs(q);
 
-        const data: Manga[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Manga, "id">),
-        }));
+      const data: Manga[] = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Manga, "id">),
+      }));
 
-        setMangas(data);
-      } catch (e) {
-        console.error("Erro ao carregar mangas:", e);
-        setMangas([]);
-      }
+      setMangas(data);
     }
 
     fetchMangas();
@@ -101,7 +92,6 @@ export default function Home() {
     return [...mangas].sort((a, b) => (b.views ?? 0) - (a.views ?? 0)).slice(0, 10);
   }, [mangas]);
 
-  // ✅ passo 5 incluído: top da semana
   const topWeek = useMemo(() => {
     return [...mangas].sort((a, b) => (b.weekViews ?? 0) - (a.weekViews ?? 0)).slice(0, 10);
   }, [mangas]);
@@ -125,24 +115,10 @@ export default function Home() {
 
                 <div className="mt-5 flex flex-wrap gap-3">
                   <Link
-                    href="/catalog"
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-black font-semibold"
-                  >
-                    📚 Catálogo
-                  </Link>
-
-                  <Link
                     href="/latest"
                     className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400"
                   >
-                    🆕 Atualizados
-                  </Link>
-
-                  <Link
-                    href="/favorites"
-                    className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-pink-400"
-                  >
-                    ❤️ Favoritos
+                    🔄 Atualizados
                   </Link>
 
                   <Link
