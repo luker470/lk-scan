@@ -51,7 +51,7 @@ export default function AppChrome({
                 href="/latest"
                 className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
               >
-                Latest
+                Atualizados
               </Link>
 
               <Link
@@ -97,7 +97,7 @@ export default function AppChrome({
               Catálogo
             </Link>
             <Link href="/latest" className="hover:text-cyan-300 transition">
-              Latest
+              Atualizados
             </Link>
             <Link href="/favorites" className="hover:text-pink-300 transition">
               Favoritos
