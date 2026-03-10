@@ -8,7 +8,7 @@ export default function ImportAutoFromUrl({
 }: {
   mangaId: string;
 }) {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
 
   const [chapterNumber, setChapterNumber] = useState(1);
   const [linksText, setLinksText] = useState("");
@@ -28,13 +28,23 @@ export default function ImportAutoFromUrl({
     setMsg(null);
     setProgress(null);
 
-    if (!user?.uid) {
+    if (authLoading) {
+      setMsg("⏳ Aguarde, verificando login...");
+      return;
+    }
+
+    if (!user) {
       setMsg("❌ Login necessário.");
       return;
     }
 
     if (!mangaId) {
       setMsg("❌ Defina um MangaId.");
+      return;
+    }
+
+    if (!chapterNumber || chapterNumber < 1) {
+      setMsg("❌ Informe um capítulo inicial válido.");
       return;
     }
 
@@ -54,7 +64,9 @@ export default function ImportAutoFromUrl({
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
 
-        setProgress(`Importando capítulo ${currentChapter} (${i + 1}/${urls.length})`);
+        setProgress(
+          `Importando capítulo ${currentChapter} (${i + 1}/${urls.length})`
+        );
 
         const res = await fetch("/api/admin/import", {
           method: "POST",
@@ -74,7 +86,6 @@ export default function ImportAutoFromUrl({
 
         if (!res.ok) {
           setMsg(`❌ Erro no capítulo ${currentChapter}\n${txt}`);
-          setLoading(false);
           return;
         }
 
@@ -100,18 +111,18 @@ export default function ImportAutoFromUrl({
         ⚡ Importador Automático
       </div>
 
-      <label className="space-y-1">
+      <label className="space-y-1 block">
         <div className="text-sm text-zinc-300">Capítulo inicial</div>
         <input
           type="number"
           min={1}
           value={chapterNumber}
           onChange={(e) => setChapterNumber(Number(e.target.value))}
-          className="w-full rounded-xl bg-zinc-800 p-2 border border-zinc-700"
+          className="w-full rounded-xl bg-zinc-800 p-2 border border-zinc-700 outline-none focus:border-cyan-400"
         />
       </label>
 
-      <label className="space-y-1">
+      <label className="space-y-1 block">
         <div className="text-sm text-zinc-300">Links dos capítulos</div>
         <textarea
           value={linksText}
@@ -122,7 +133,7 @@ export default function ImportAutoFromUrl({
 https://mangasonline.blog/capitulo-1
 https://mangasonline.blog/capitulo-2
 https://mangasonline.blog/capitulo-3`}
-          className="w-full rounded-xl bg-zinc-800 p-2 border border-zinc-700"
+          className="w-full rounded-xl bg-zinc-800 p-2 border border-zinc-700 outline-none focus:border-cyan-400"
         />
       </label>
 
@@ -149,7 +160,7 @@ https://mangasonline.blog/capitulo-3`}
 
       <button
         onClick={runImport}
-        disabled={loading}
+        disabled={loading || authLoading}
         className="w-full rounded-xl bg-cyan-500 p-3 font-bold text-black hover:bg-cyan-600 disabled:opacity-50"
       >
         {loading ? "Importando capítulos..." : "Importar capítulos"}

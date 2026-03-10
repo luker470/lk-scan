@@ -16,7 +16,7 @@ export default function AppChrome({
   async function handleLogout() {
     try {
       await logout();
-      router.push("/");
+      router.push("/login");
     } catch (error) {
       console.error(error);
       alert("Não consegui sair.");
@@ -26,7 +26,7 @@ export default function AppChrome({
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black">
       <header className="sticky top-0 z-50 border-b border-zinc-800/80 bg-black/80 backdrop-blur-xl">
-        <div className="max-w-6xl mx-auto px-4">
+        <div className="max-w-7xl mx-auto px-4">
           <div className="flex flex-col gap-3 py-3 md:flex-row md:items-center md:justify-between">
             <Link href="/" className="flex items-center gap-3 w-fit">
               <img
@@ -46,20 +46,6 @@ export default function AppChrome({
 
             <nav className="flex flex-wrap items-center gap-2 text-sm">
               <Link
-                href="/"
-                className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
-              >
-                Home
-              </Link>
-
-              <Link
-                href="/latest"
-                className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
-              >
-                Atualizados
-              </Link>
-
-              <Link
                 href="/ranking-users"
                 className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
               >
@@ -72,7 +58,7 @@ export default function AppChrome({
                     href="/history"
                     className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
                   >
-                    Lendo recentes
+                    Vistos recentes
                   </Link>
 
                   <Link
@@ -134,20 +120,12 @@ export default function AppChrome({
       <main className="min-h-[calc(100vh-140px)]">{children}</main>
 
       <footer className="border-t border-zinc-800/80 bg-black/60">
-        <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div className="max-w-7xl mx-auto px-4 py-6 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div className="text-sm text-zinc-400">
             © {new Date().getFullYear()} LK-Scan. Todos os direitos reservados.
           </div>
 
           <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-            <Link href="/" className="hover:text-cyan-300 transition">
-              Home
-            </Link>
-
-            <Link href="/latest" className="hover:text-cyan-300 transition">
-              Atualizados
-            </Link>
-
             <Link href="/ranking-users" className="hover:text-cyan-300 transition">
               Ranking
             </Link>
@@ -155,7 +133,7 @@ export default function AppChrome({
             {!loading && user && (
               <>
                 <Link href="/history" className="hover:text-cyan-300 transition">
-                  Lendo recentes
+                  Vistos recentes
                 </Link>
                 <Link href="/favorites" className="hover:text-pink-300 transition">
                   Favoritos

@@ -3,12 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { collection, getDocs, orderBy, query } from "firebase/firestore";
-import { db } from "../lib/firebase";
+import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import { useAuth } from "@/context/AuthContext";
-
-import { Swiper, SwiperSlide } from "swiper/react";
-import "swiper/css";
 
 type OrderMode = "updated" | "created" | "az" | "views";
 
@@ -19,23 +16,34 @@ interface Manga {
   genre?: string;
   views?: number;
   weekViews?: number;
-  weekBucket?: string;
   createdAt?: any;
   updatedAt?: any;
   chaptersCount?: number;
   lastChapterNumber?: number;
 }
 
+type HistoryItem = {
+  id: string;
+  mangaId: string;
+  chapterId: string;
+  mangaTitle: string;
+  mangaCover?: string;
+  chapterTitle?: string;
+  updatedAt?: any;
+};
+
 function tsSeconds(v: any) {
   return v?.seconds ?? 0;
 }
 
 export default function Home() {
+  const { user } = useAuth();
+
   const [mangas, setMangas] = useState<Manga[]>([]);
+  const [recentReads, setRecentReads] = useState<HistoryItem[]>([]);
   const [queryText, setQueryText] = useState("");
   const [genreFilter, setGenreFilter] = useState("Todos");
   const [orderMode, setOrderMode] = useState<OrderMode>("updated");
-  const { user } = useAuth();
 
   useEffect(() => {
     async function fetchMangas() {
@@ -54,6 +62,25 @@ export default function Home() {
 
     fetchMangas();
   }, []);
+
+  useEffect(() => {
+    async function fetchRecentReads() {
+      if (!user?.uid) {
+        setRecentReads([]);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/history?uid=${encodeURIComponent(user.uid)}`);
+        const data = await res.json();
+        setRecentReads(data?.items || []);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    fetchRecentReads();
+  }, [user?.uid]);
 
   const genres = useMemo(() => {
     const set = new Set<string>();
@@ -99,10 +126,11 @@ export default function Home() {
   }, [mangas]);
 
   const highlights = useMemo(() => filtered.slice(0, 10), [filtered]);
+  const recentUpdated = useMemo(() => filtered.slice(0, 8), [filtered]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white">
-      <div className="max-w-6xl mx-auto px-4 pb-12">
+      <div className="max-w-7xl mx-auto px-4 pb-12">
         <section className="mt-6 mb-8">
           <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-b from-black via-zinc-900 to-black">
             <div className="p-6 md:p-10 flex flex-col md:flex-row items-center justify-between gap-6">
@@ -116,18 +144,20 @@ export default function Home() {
                 </p>
 
                 <div className="mt-5 flex flex-wrap gap-3">
-                  <Link
-                    href="/latest"
-                    className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400"
-                  >
-                    🔄 Atualizados
-                  </Link>
+                  {user && (
+                    <Link
+                      href="/history"
+                      className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400"
+                    >
+                      📚 Vistos recentes
+                    </Link>
+                  )}
 
                   <Link
-                    href="/history"
+                    href="/ranking-users"
                     className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400"
                   >
-                    📚 Lendo recentes
+                    🏆 Ranking
                   </Link>
                 </div>
               </div>
@@ -171,44 +201,122 @@ export default function Home() {
           </select>
         </section>
 
-        <section className="mb-8">
-          <h2 className="text-xl font-semibold mb-3">🔥 Destaques</h2>
+        {user && recentReads.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-xl font-semibold mb-4">📚 Vistos recentes</h2>
 
-          <Swiper
-            spaceBetween={12}
-            slidesPerView={2}
-            breakpoints={{
-              640: { slidesPerView: 3 },
-              1024: { slidesPerView: 5 },
-            }}
-          >
-            {highlights.map((manga) => {
-              const cover = proxifyImage(manga.cover);
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+              {recentReads.slice(0, 8).map((item) => {
+                const cover = proxifyImage(item.mangaCover);
 
-              return (
-                <SwiperSlide key={manga.id}>
+                return (
                   <Link
-                    href={`/manga/${manga.id}`}
-                    className="block rounded-xl overflow-hidden border border-zinc-800 hover:border-cyan-400 transition"
+                    key={item.id}
+                    href={`/manga/${item.mangaId}/chapter/${item.chapterId}`}
+                    className="group rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 flex gap-3 hover:border-cyan-400 transition"
                   >
                     {cover ? (
                       <img
                         src={cover}
-                        alt={manga.title}
-                        className="h-44 w-full object-cover"
+                        alt={item.mangaTitle}
+                        className="h-24 w-20 object-cover rounded-xl shrink-0"
                       />
                     ) : (
-                      <div className="h-44 bg-zinc-800 flex items-center justify-center text-zinc-400">
+                      <div className="h-24 w-20 rounded-xl bg-zinc-800 flex items-center justify-center text-xs text-zinc-400 shrink-0">
                         Sem capa
                       </div>
                     )}
 
-                    <div className="p-2 text-sm font-semibold">{manga.title}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold line-clamp-1 group-hover:text-cyan-300 transition">
+                        {item.mangaTitle}
+                      </div>
+                      <div className="text-sm text-zinc-400 line-clamp-1 mt-1">
+                        {item.chapterTitle || "Continuar leitura"}
+                      </div>
+                      <div className="text-xs text-zinc-500 mt-3">
+                        Clique para continuar →
+                      </div>
+                    </div>
                   </Link>
-                </SwiperSlide>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        <section className="mb-10">
+          <h2 className="text-xl font-semibold mb-4">🆕 Atualizados</h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            {recentUpdated.map((manga) => {
+              const cover = proxifyImage(manga.cover);
+
+              return (
+                <Link
+                  key={manga.id}
+                  href={`/manga/${manga.id}`}
+                  className="group rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 flex gap-3 hover:border-cyan-400 transition"
+                >
+                  {cover ? (
+                    <img
+                      src={cover}
+                      alt={manga.title}
+                      className="h-24 w-20 object-cover rounded-xl shrink-0"
+                    />
+                  ) : (
+                    <div className="h-24 w-20 rounded-xl bg-zinc-800 flex items-center justify-center text-xs text-zinc-400 shrink-0">
+                      Sem capa
+                    </div>
+                  )}
+
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold line-clamp-1 group-hover:text-cyan-300 transition">
+                      {manga.title}
+                    </div>
+                    <div className="text-sm text-zinc-400 line-clamp-1 mt-1">
+                      {manga.genre || "Sem gênero"}
+                    </div>
+                    <div className="text-xs text-zinc-500 mt-3">
+                      {(manga.views ?? 0).toLocaleString()} views
+                    </div>
+                  </div>
+                </Link>
               );
             })}
-          </Swiper>
+          </div>
+        </section>
+
+        <section className="mb-8">
+          <h2 className="text-xl font-semibold mb-3">🔥 Destaques</h2>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
+            {highlights.map((manga) => {
+              const cover = proxifyImage(manga.cover);
+
+              return (
+                <Link
+                  key={manga.id}
+                  href={`/manga/${manga.id}`}
+                  className="block rounded-xl overflow-hidden border border-zinc-800 hover:border-cyan-400 transition bg-zinc-900/50"
+                >
+                  {cover ? (
+                    <img
+                      src={cover}
+                      alt={manga.title}
+                      className="h-52 w-full object-cover"
+                    />
+                  ) : (
+                    <div className="h-52 bg-zinc-800 flex items-center justify-center text-zinc-400">
+                      Sem capa
+                    </div>
+                  )}
+
+                  <div className="p-3 text-sm font-semibold">{manga.title}</div>
+                </Link>
+              );
+            })}
+          </div>
         </section>
 
         <section className="mb-10">
@@ -248,45 +356,6 @@ export default function Home() {
           </div>
         </section>
 
-        <section>
-          <h2 className="text-xl font-semibold mb-3">📚 Mangás</h2>
-
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
-            {filtered.map((manga) => {
-              const cover = proxifyImage(manga.cover);
-
-              return (
-                <Link
-                  key={manga.id}
-                  href={`/manga/${manga.id}`}
-                  className="bg-zinc-900/60 rounded-2xl p-3 border border-zinc-800 hover:border-cyan-400 transition block"
-                >
-                  {cover ? (
-                    <img
-                      src={cover}
-                      alt={manga.title}
-                      className="h-44 w-full object-cover rounded-xl mb-2"
-                    />
-                  ) : (
-                    <div className="h-44 bg-zinc-800 rounded-xl mb-2 flex items-center justify-center text-zinc-400">
-                      Sem capa
-                    </div>
-                  )}
-
-                  <p className="text-sm font-medium line-clamp-1">{manga.title}</p>
-
-                  <p className="text-xs text-zinc-400">{manga.genre || "Sem gênero"}</p>
-
-                  <p className="text-[11px] text-zinc-500">
-                    {(manga.views ?? 0).toLocaleString()} views
-                    {typeof manga.weekViews === "number" ? ` • ${manga.weekViews} semana` : ""}
-                  </p>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
-
         <section className="mt-10">
           <h2 className="text-xl font-semibold mb-3">🏆 Top 10 geral</h2>
 
@@ -308,7 +377,7 @@ export default function Home() {
                     className="h-10 w-8 object-cover rounded"
                   />
                 ) : (
-                  <div className="h-10 w-8 bg-zinc-800 rounded"></div>
+                  <div className="h-10 w-8 bg-zinc-800 rounded" />
                 )}
 
                 <span>{m.title}</span>
