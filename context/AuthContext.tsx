@@ -26,35 +26,36 @@ const AuthContext = createContext<AuthContextType>({
   logout: async () => {},
 });
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
-
+export const AuthProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-
     if (!auth) {
-      console.error("Firebase auth não inicializado");
+      console.error("[AUTH] Firebase Auth não inicializado.");
       setLoading(false);
       return;
     }
 
     const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
+      setUser(u ?? null);
       setLoading(false);
     });
 
     return () => unsub();
-
   }, []);
 
   async function login(email: string, password: string) {
-    if (!auth) throw new Error("Auth não iniciado");
+    if (!auth) throw new Error("Firebase Auth não inicializado.");
     await signInWithEmailAndPassword(auth, email, password);
   }
 
   async function register(email: string, password: string) {
-    if (!auth) throw new Error("Auth não iniciado");
+    if (!auth) throw new Error("Firebase Auth não inicializado.");
     await createUserWithEmailAndPassword(auth, email, password);
   }
 

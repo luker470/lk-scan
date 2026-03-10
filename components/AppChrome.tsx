@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { isAdmin } from "@/lib/admin";
 
@@ -9,7 +10,18 @@ export default function AppChrome({
 }: {
   children: React.ReactNode;
 }) {
-  const { user } = useAuth();
+  const { user, loading, logout } = useAuth();
+  const router = useRouter();
+
+  async function handleLogout() {
+    try {
+      await logout();
+      router.push("/");
+    } catch (error) {
+      console.error(error);
+      alert("Não consegui sair.");
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black">
@@ -54,21 +66,50 @@ export default function AppChrome({
                 Atualizados
               </Link>
 
-              <Link
-                href="/favorites"
-                className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-pink-400 hover:text-pink-300 transition"
-              >
-                Favoritos
-              </Link>
+              {!loading && !user && (
+                <>
+                  <Link
+                    href="/login"
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                  >
+                    Entrar
+                  </Link>
 
-              <Link
-                href="/history"
-                className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
-              >
-                Histórico
-              </Link>
+                  <Link
+                    href="/register"
+                    className="px-3 py-2 rounded-xl bg-cyan-500 text-black font-semibold hover:bg-cyan-400 transition"
+                  >
+                    Cadastrar
+                  </Link>
+                </>
+              )}
 
-              {isAdmin(user?.uid) && (
+              {!loading && user && (
+                <>
+                  <Link
+                    href="/favorites"
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-pink-400 hover:text-pink-300 transition"
+                  >
+                    Favoritos
+                  </Link>
+
+                  <Link
+                    href="/history"
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                  >
+                    Histórico
+                  </Link>
+
+                  <button
+                    onClick={handleLogout}
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-red-400 hover:text-red-300 transition"
+                  >
+                    Sair
+                  </button>
+                </>
+              )}
+
+              {!loading && user && isAdmin(user.uid) && (
                 <Link
                   href="/admin"
                   className="px-3 py-2 rounded-xl bg-cyan-500 text-black font-semibold hover:bg-cyan-400 transition"
@@ -99,9 +140,16 @@ export default function AppChrome({
             <Link href="/latest" className="hover:text-cyan-300 transition">
               Atualizados
             </Link>
-            <Link href="/favorites" className="hover:text-pink-300 transition">
-              Favoritos
-            </Link>
+            {!loading && user && (
+              <>
+                <Link href="/favorites" className="hover:text-pink-300 transition">
+                  Favoritos
+                </Link>
+                <Link href="/history" className="hover:text-cyan-300 transition">
+                  Histórico
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </footer>
