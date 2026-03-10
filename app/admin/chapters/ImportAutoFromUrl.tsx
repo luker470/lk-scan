@@ -8,7 +8,6 @@ export default function ImportAutoFromUrl({
 }: {
   mangaId: string;
 }) {
-
   const { user } = useAuth();
 
   const [chapterNumber, setChapterNumber] = useState(1);
@@ -19,17 +18,13 @@ export default function ImportAutoFromUrl({
   const [progress, setProgress] = useState<string | null>(null);
 
   function extractUrls(text: string) {
-
     const matches = text.match(/https?:\/\/[^\s"'<>]+/g) || [];
-
     return matches
       .map((s) => s.trim())
       .filter((u) => u.startsWith("http"));
-
   }
 
   async function runImport() {
-
     setMsg(null);
     setProgress(null);
 
@@ -53,17 +48,13 @@ export default function ImportAutoFromUrl({
     setLoading(true);
 
     try {
-
       let currentChapter = chapterNumber;
       let imported = 0;
 
       for (let i = 0; i < urls.length; i++) {
-
         const url = urls[i];
 
-        setProgress(
-          `Importando capítulo ${currentChapter} (${i + 1}/${urls.length})`
-        );
+        setProgress(`Importando capítulo ${currentChapter} (${i + 1}/${urls.length})`);
 
         const res = await fetch("/api/admin/import", {
           method: "POST",
@@ -82,11 +73,8 @@ export default function ImportAutoFromUrl({
         const txt = await res.text();
 
         if (!res.ok) {
-
           setMsg(`❌ Erro no capítulo ${currentChapter}\n${txt}`);
-
           setLoading(false);
-
           return;
         }
 
@@ -95,36 +83,25 @@ export default function ImportAutoFromUrl({
       }
 
       setMsg(`✅ Importados ${imported} capítulos com sucesso.`);
-
       setLinksText("");
-
       setChapterNumber(currentChapter);
-
       setProgress(null);
-
     } catch (e) {
-
       console.error(e);
-
       setMsg("❌ Falha durante a importação.");
-
     } finally {
-
       setLoading(false);
-
     }
   }
 
   return (
     <div className="w-full space-y-4 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
-
       <div className="text-lg font-semibold text-cyan-400">
         ⚡ Importador Automático
       </div>
 
       <label className="space-y-1">
         <div className="text-sm text-zinc-300">Capítulo inicial</div>
-
         <input
           type="number"
           min={1}
@@ -135,10 +112,7 @@ export default function ImportAutoFromUrl({
       </label>
 
       <label className="space-y-1">
-        <div className="text-sm text-zinc-300">
-          Links dos capítulos
-        </div>
-
+        <div className="text-sm text-zinc-300">Links dos capítulos</div>
         <textarea
           value={linksText}
           onChange={(e) => setLinksText(e.target.value)}
@@ -184,7 +158,6 @@ https://mangasonline.blog/capitulo-3`}
       <div className="text-[11px] text-zinc-500">
         Cole vários links de capítulos. O sistema importará automaticamente em sequência.
       </div>
-
     </div>
   );
 }

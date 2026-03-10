@@ -5,6 +5,7 @@ import Link from "next/link";
 import { collection, getDocs, orderBy, query } from "firebase/firestore";
 import { db } from "../lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
+import { useAuth } from "@/context/AuthContext";
 
 import { Swiper, SwiperSlide } from "swiper/react";
 import "swiper/css";
@@ -34,6 +35,7 @@ export default function Home() {
   const [queryText, setQueryText] = useState("");
   const [genreFilter, setGenreFilter] = useState("Todos");
   const [orderMode, setOrderMode] = useState<OrderMode>("updated");
+  const { user } = useAuth();
 
   useEffect(() => {
     async function fetchMangas() {
@@ -125,7 +127,7 @@ export default function Home() {
                     href="/history"
                     className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400"
                   >
-                    📚 Continuar lendo
+                    📚 Lendo recentes
                   </Link>
                 </div>
               </div>

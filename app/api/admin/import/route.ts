@@ -1,11 +1,9 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
-import admin from "firebase-admin";
+import { ADMIN_UID } from "@/lib/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-import { ADMIN_UID } from "@/lib/admin";
 
 function isAuthed(req: Request) {
   const uid = req.headers.get("x-user-id");
@@ -88,6 +86,7 @@ export async function POST(req: Request) {
     const chapterRef = mangaRef.collection("chapters").doc(chapterId);
 
     const existingChapterSnap = await chapterRef.get();
+
     if (existingChapterSnap.exists && !overwriteExisting) {
       return new NextResponse(
         `Capítulo ${chapterId} já existe. Marque "Sobrescrever" para atualizar.`,
@@ -160,6 +159,7 @@ export async function POST(req: Request) {
     const chaptersCount = chaptersSnap.size;
 
     let lastChapterNumber = 0;
+
     chaptersSnap.forEach((docSnap) => {
       const data = docSnap.data() as any;
       const n = Number(data.number || 0);

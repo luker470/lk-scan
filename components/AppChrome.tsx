@@ -59,6 +59,38 @@ export default function AppChrome({
                 Atualizados
               </Link>
 
+              <Link
+                href="/ranking-users"
+                className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Ranking
+              </Link>
+
+              {!loading && user && (
+                <>
+                  <Link
+                    href="/history"
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                  >
+                    Lendo recentes
+                  </Link>
+
+                  <Link
+                    href="/favorites"
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-pink-400 hover:text-pink-300 transition"
+                  >
+                    Favoritos
+                  </Link>
+
+                  <Link
+                    href="/profile"
+                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                  >
+                    Perfil
+                  </Link>
+                </>
+              )}
+
               {!loading && !user && (
                 <>
                   <Link
@@ -78,21 +110,12 @@ export default function AppChrome({
               )}
 
               {!loading && user && (
-                <>
-                  <Link
-                    href="/history"
-                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
-                  >
-                    Histórico
-                  </Link>
-
-                  <button
-                    onClick={handleLogout}
-                    className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-red-400 hover:text-red-300 transition"
-                  >
-                    Sair
-                  </button>
-                </>
+                <button
+                  onClick={handleLogout}
+                  className="px-3 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-red-400 hover:text-red-300 transition"
+                >
+                  Sair
+                </button>
               )}
 
               {!loading && user && isAdmin(user.uid) && (
@@ -125,10 +148,22 @@ export default function AppChrome({
               Atualizados
             </Link>
 
+            <Link href="/ranking-users" className="hover:text-cyan-300 transition">
+              Ranking
+            </Link>
+
             {!loading && user && (
-              <Link href="/history" className="hover:text-cyan-300 transition">
-                Histórico
-              </Link>
+              <>
+                <Link href="/history" className="hover:text-cyan-300 transition">
+                  Lendo recentes
+                </Link>
+                <Link href="/favorites" className="hover:text-pink-300 transition">
+                  Favoritos
+                </Link>
+                <Link href="/profile" className="hover:text-cyan-300 transition">
+                  Perfil
+                </Link>
+              </>
             )}
           </div>
         </div>
