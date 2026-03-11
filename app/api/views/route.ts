@@ -1,71 +1,146 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
-import admin from "firebase-admin";
+import { buildUpdatedUserProgress, getDayKey, getMonthKey, getWeekKey } from "@/lib/userProgress";
 
 export const runtime = "nodejs";
-
-function getWeekBucket(date = new Date()) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const dayNum = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const weekNum = Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}-W${String(weekNum).padStart(2, "0")}`;
-}
+export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
-    const { mangaId, chapterId } = await req.json();
+    const body = await req.json().catch(() => null);
+
+    const mangaId = String(body?.mangaId || "");
+    const chapterId = String(body?.chapterId || "");
+    const uid = String(body?.uid || "").trim();
 
     if (!mangaId || !chapterId) {
-      return NextResponse.json({ error: "Missing mangaId/chapterId" }, { status: 400 });
+      return NextResponse.json({ ok: false, error: "Missing mangaId or chapterId" }, { status: 400 });
     }
 
     const db = getAdminDb();
     const now = new Date();
-    const weekBucket = getWeekBucket(now);
+
+    const dayKey = getDayKey(now);
+    const weekKey = getWeekKey(now);
+    const monthKey = getMonthKey(now);
 
     const mangaRef = db.collection("mangas").doc(mangaId);
     const chapterRef = mangaRef.collection("chapters").doc(chapterId);
 
-    await db.runTransaction(async (tx) => {
-      const [mangaSnap, chapterSnap] = await Promise.all([
-        tx.get(mangaRef),
-        tx.get(chapterRef),
-      ]);
+    const mangaSnap = await mangaRef.get();
+    const chapterSnap = await chapterRef.get();
 
-      const mangaData = mangaSnap.exists ? (mangaSnap.data() as any) : {};
-      const chapterData = chapterSnap.exists ? (chapterSnap.data() as any) : {};
+    if (!mangaSnap.exists || !chapterSnap.exists) {
+      return NextResponse.json({ ok: false, error: "Manga or chapter not found" }, { status: 404 });
+    }
 
-      const sameMangaWeek = mangaData.weekBucket === weekBucket;
-      const sameChapterWeek = chapterData.weekBucket === weekBucket;
+    const batch = db.batch();
 
-      tx.set(
-        mangaRef,
-        {
-          views: admin.firestore.FieldValue.increment(1),
-          weekViews: sameMangaWeek ? admin.firestore.FieldValue.increment(1) : 1,
-          weekBucket,
-          updatedAt: now,
-        },
-        { merge: true }
-      );
+    const mangaData = mangaSnap.data() || {};
+    const chapterData = chapterSnap.data() || {};
 
-      tx.set(
-        chapterRef,
-        {
-          views: admin.firestore.FieldValue.increment(1),
-          weekViews: sameChapterWeek ? admin.firestore.FieldValue.increment(1) : 1,
-          weekBucket,
-          updatedAt: now,
-        },
-        { merge: true }
-      );
-    });
+    const currentMangaDayKey = mangaData.dayBucket || null;
+    const currentMangaWeekKey = mangaData.weekBucket || null;
+    const currentMangaMonthKey = mangaData.monthBucket || null;
 
-    return NextResponse.json({ ok: true, weekBucket });
-  } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Failed", details: String(e) }, { status: 500 });
+    const currentChapterDayKey = chapterData.dayBucket || null;
+    const currentChapterWeekKey = chapterData.weekBucket || null;
+    const currentChapterMonthKey = chapterData.monthBucket || null;
+
+    const nextMangaDayViews =
+      currentMangaDayKey === dayKey ? Number(mangaData.dayViews || 0) + 1 : 1;
+    const nextMangaWeekViews =
+      currentMangaWeekKey === weekKey ? Number(mangaData.weekViews || 0) + 1 : 1;
+    const nextMangaMonthViews =
+      currentMangaMonthKey === monthKey ? Number(mangaData.monthViews || 0) + 1 : 1;
+
+    const nextChapterDayViews =
+      currentChapterDayKey === dayKey ? Number(chapterData.dayViews || 0) + 1 : 1;
+    const nextChapterWeekViews =
+      currentChapterWeekKey === weekKey ? Number(chapterData.weekViews || 0) + 1 : 1;
+    const nextChapterMonthViews =
+      currentChapterMonthKey === monthKey ? Number(chapterData.monthViews || 0) + 1 : 1;
+
+    batch.set(
+      mangaRef,
+      {
+        views: Number(mangaData.views || 0) + 1,
+        dayViews: nextMangaDayViews,
+        weekViews: nextMangaWeekViews,
+        monthViews: nextMangaMonthViews,
+        dayBucket: dayKey,
+        weekBucket: weekKey,
+        monthBucket: monthKey,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    batch.set(
+      chapterRef,
+      {
+        views: Number(chapterData.views || 0) + 1,
+        dayViews: nextChapterDayViews,
+        weekViews: nextChapterWeekViews,
+        monthViews: nextChapterMonthViews,
+        dayBucket: dayKey,
+        weekBucket: weekKey,
+        monthBucket: monthKey,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    if (uid) {
+      const userRef = db.collection("users").doc(uid);
+      const readKey = `${mangaId}_${chapterId}`;
+      const readRef = userRef.collection("readChapters").doc(readKey);
+
+      const [userSnap, readSnap] = await Promise.all([userRef.get(), readRef.get()]);
+
+      if (userSnap.exists && !readSnap.exists) {
+        const userData = userSnap.data() || {};
+        const isVip = Boolean(userData.isVip);
+        const earnedXp = isVip ? 15 : 10;
+
+        const nextProgress = buildUpdatedUserProgress(userData, earnedXp);
+
+        batch.set(
+          userRef,
+          {
+            ...nextProgress,
+            updatedAt: now,
+            lastReadAt: now,
+          },
+          { merge: true }
+        );
+
+        batch.set(readRef, {
+          mangaId,
+          chapterId,
+          earnedXp,
+          createdAt: now,
+        });
+      } else if (userSnap.exists) {
+        batch.set(
+          userRef,
+          {
+            lastReadAt: now,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      }
+    }
+
+    await batch.commit();
+
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    console.error("POST /api/views error:", error);
+    return NextResponse.json(
+      { ok: false, error: error?.message || "Internal error" },
+      { status: 500 }
+    );
   }
 }

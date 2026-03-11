@@ -12,5 +12,11 @@
         "*.local"
       ]
     }
-  ]
+  ],
+  "firestore": {
+    "rules": "lib/firestore.rules"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
 }

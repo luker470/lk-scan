@@ -41,13 +41,6 @@ export default function ChapterClient({
       setLoading(true);
 
       try {
-        if (!db) {
-          console.error("Firestore não inicializado");
-          setTitle("Capítulo não encontrado");
-          setPages([]);
-          return;
-        }
-
         const mangaRef = doc(db, "mangas", mangaId);
         const mangaSnap = await getDoc(mangaRef);
 
@@ -100,9 +93,13 @@ export default function ChapterClient({
     fetch("/api/views", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mangaId, chapterId }),
+      body: JSON.stringify({
+        mangaId,
+        chapterId,
+        uid: user?.uid || "",
+      }),
     }).catch(() => {});
-  }, [mangaId, chapterId]);
+  }, [mangaId, chapterId, user?.uid]);
 
   useEffect(() => {
     if (!user?.uid || !mangaId || !chapterId || !title) return;

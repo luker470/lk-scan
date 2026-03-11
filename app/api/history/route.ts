@@ -1,44 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
-import admin from "firebase-admin";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-export async function POST(req: Request) {
+export async function GET(req: Request) {
   try {
-    const { uid, mangaId, chapterId, mangaTitle, mangaCover, chapterTitle } = await req.json();
-
-    if (!uid || !mangaId || !chapterId) {
-      return NextResponse.json({ error: "Missing uid/mangaId/chapterId" }, { status: 400 });
-    }
-
-    const db = getAdminDb();
-    const ref = db.collection("users").doc(uid).collection("history").doc(mangaId);
-
-    await ref.set(
-      {
-        mangaId,
-        chapterId,
-        mangaTitle: mangaTitle || "",
-        mangaCover: mangaCover || "",
-        chapterTitle: chapterTitle || "",
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
-
-    return NextResponse.json({ ok: true });
-  } catch (e) {
-    return NextResponse.json({ error: "Failed", details: String(e) }, { status: 500 });
-  }
-}
-
-export async function GET(req: NextRequest) {
-  try {
-    const uid = req.nextUrl.searchParams.get("uid");
+    const { searchParams } = new URL(req.url);
+    const uid = String(searchParams.get("uid") || "").trim();
 
     if (!uid) {
-      return NextResponse.json({ error: "Missing uid" }, { status: 400 });
+      return NextResponse.json({ ok: false, items: [] }, { status: 400 });
     }
 
     const db = getAdminDb();
@@ -52,11 +24,66 @@ export async function GET(req: NextRequest) {
 
     const items = snap.docs.map((d) => ({
       id: d.id,
-      ...(d.data() as Record<string, unknown>),
+      ...d.data(),
     }));
 
     return NextResponse.json({ ok: true, items });
-  } catch (e) {
-    return NextResponse.json({ error: "Failed", details: String(e) }, { status: 500 });
+  } catch (error: any) {
+    console.error("GET /api/history error:", error);
+    return NextResponse.json({ ok: false, items: [] }, { status: 500 });
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json().catch(() => null);
+
+    const uid = String(body?.uid || "").trim();
+    const mangaId = String(body?.mangaId || "").trim();
+    const chapterId = String(body?.chapterId || "").trim();
+    const mangaTitle = String(body?.mangaTitle || "").trim();
+    const mangaCover = String(body?.mangaCover || "").trim();
+    const chapterTitle = String(body?.chapterTitle || "").trim();
+
+    if (!uid || !mangaId || !chapterId) {
+      return NextResponse.json({ ok: false, error: "Missing fields" }, { status: 400 });
+    }
+
+    const db = getAdminDb();
+    const now = new Date();
+    const docId = `${mangaId}_${chapterId}`;
+
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("history")
+      .doc(docId)
+      .set(
+        {
+          mangaId,
+          chapterId,
+          mangaTitle,
+          mangaCover,
+          chapterTitle,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+
+    await db.collection("users").doc(uid).set(
+      {
+        lastReadAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    return NextResponse.json({ ok: true });
+  } catch (error: any) {
+    console.error("POST /api/history error:", error);
+    return NextResponse.json(
+      { ok: false, error: error?.message || "Internal error" },
+      { status: 500 }
+    );
   }
 }

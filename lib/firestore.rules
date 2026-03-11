@@ -7,48 +7,52 @@ service cloud.firestore {
     }
 
     function isOwner(uid) {
-      return signedIn() && request.auth.uid == uid;
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.uid == "Dpmh3d0Ag5XsuwsJOBAmuR2Gqba2";
+    }
+
+    match /users/{uid} {
+      allow read: if true;
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid) || isAdmin();
+      allow delete: if isAdmin();
+
+      match /favorites/{docId} {
+        allow read, write: if isOwner(uid) || isAdmin();
+      }
+
+      match /history/{docId} {
+        allow read, write: if isOwner(uid) || isAdmin();
+      }
+
+      match /readChapters/{docId} {
+        allow read, write: if isOwner(uid) || isAdmin();
+      }
+
+      match /achievements/{docId} {
+        allow read: if true;
+        allow write: if isOwner(uid) || isAdmin();
+      }
     }
 
     match /mangas/{mangaId} {
       allow read: if true;
-
-      // TEMPORÁRIO: permite importadores client-side funcionarem
-      allow create, update, delete: if signedIn();
+      allow write: if isAdmin();
 
       match /chapters/{chapterId} {
         allow read: if true;
-
-        // TEMPORÁRIO: permite importadores client-side funcionarem
-        allow create, update, delete: if signedIn();
+        allow write: if isAdmin();
 
         match /comments/{commentId} {
           allow read: if true;
-
-          allow create: if signedIn()
-            && request.resource.data.uid == request.auth.uid
-            && request.resource.data.text is string
-            && request.resource.data.text.size() > 0
-            && request.resource.data.text.size() <= 800;
-
-          allow delete: if signedIn()
-            && resource.data.uid == request.auth.uid;
-
-          allow update: if false;
+          allow create: if signedIn();
+          allow update, delete: if signedIn() &&
+            (resource.data.uid == request.auth.uid || isAdmin());
         }
-      }
-    }
-
-    match /users/{uid} {
-      allow read, update, delete: if isOwner(uid);
-      allow create: if isOwner(uid);
-
-      match /favorites/{mangaId} {
-        allow read, write: if isOwner(uid);
-      }
-
-      match /history/{mangaId} {
-        allow read, write: if isOwner(uid);
       }
     }
   }
