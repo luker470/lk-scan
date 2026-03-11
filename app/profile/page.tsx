@@ -149,13 +149,19 @@ export default function ProfilePage() {
               />
             ) : (
               <div className="h-28 w-28 rounded-full bg-zinc-800 flex items-center justify-center text-3xl font-bold">
-                {(profile?.displayName || user.email || "U").slice(0, 1).toUpperCase()}
+                {(profile?.displayName || user.email || "U")
+                  .slice(0, 1)
+                  .toUpperCase()}
               </div>
             )}
 
             <div>
-              <div className="text-xl font-bold">{profile?.displayName || "Usuário"}</div>
-              <div className="text-sm text-zinc-400">@{profile?.username || "usuario"}</div>
+              <div className="text-xl font-bold">
+                {profile?.displayName || "Usuário"}
+              </div>
+              <div className="text-sm text-zinc-400">
+                @{profile?.username || "usuario"}
+              </div>
             </div>
 
             <div className="text-xs px-3 py-1 rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-300">
@@ -164,7 +170,9 @@ export default function ProfilePage() {
 
             <div className="text-xs text-zinc-400">
               {profile?.title || "Leitor Iniciante"}
-              {profile?.isVip && profile?.vipTier ? ` • ${getVipBadge(profile.vipTier)}` : ""}
+              {profile?.isVip && profile?.vipTier
+                ? ` • ${getVipBadge(profile.vipTier)}`
+                : ""}
             </div>
           </div>
 
@@ -187,15 +195,21 @@ export default function ProfilePage() {
 
           <div className="grid grid-cols-3 gap-3 text-center">
             <div className="rounded-xl bg-black/30 p-3">
-              <div className="text-lg font-bold">{profile?.chaptersRead || 0}</div>
+              <div className="text-lg font-bold">
+                {profile?.chaptersRead || 0}
+              </div>
               <div className="text-[11px] text-zinc-500">Capítulos</div>
             </div>
             <div className="rounded-xl bg-black/30 p-3">
-              <div className="text-lg font-bold">{profile?.favoritesCount || 0}</div>
+              <div className="text-lg font-bold">
+                {profile?.favoritesCount || 0}
+              </div>
               <div className="text-[11px] text-zinc-500">Favoritos</div>
             </div>
             <div className="rounded-xl bg-black/30 p-3">
-              <div className="text-lg font-bold">{profile?.commentsCount || 0}</div>
+              <div className="text-lg font-bold">
+                {profile?.commentsCount || 0}
+              </div>
               <div className="text-[11px] text-zinc-500">Comentários</div>
             </div>
           </div>
@@ -251,7 +265,11 @@ export default function ProfilePage() {
               disabled={saving || uploading}
               className="w-full rounded-xl bg-cyan-500 p-3 font-bold text-black hover:bg-cyan-600 disabled:opacity-50"
             >
-              {uploading ? "Enviando imagem..." : saving ? "Salvando..." : "Salvar perfil"}
+              {uploading
+                ? "Enviando imagem..."
+                : saving
+                ? "Salvando..."
+                : "Salvar perfil"}
             </button>
           </div>
         </div>

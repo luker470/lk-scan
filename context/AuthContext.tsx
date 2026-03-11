@@ -27,16 +27,18 @@ import { getLevelFromXp } from "@/lib/levels";
 import { getTitleByLevel } from "@/lib/titles";
 import { isAdmin } from "@/lib/admin";
 
+type RegisterParams = {
+  email: string;
+  password: string;
+  username: string;
+  displayName?: string;
+};
+
 type AuthContextType = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (params: {
-    email: string;
-    password: string;
-    username: string;
-    displayName?: string;
-  }) => Promise<void>;
+  register: (params: RegisterParams) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
 };
@@ -60,13 +62,13 @@ async function usernameExists(usernameLower: string) {
     where("usernameLower", "==", usernameLower),
     limit(1)
   );
-
   const snap = await getDocs(q);
   return !snap.empty;
 }
 
 async function generateUniqueUsername(baseValue: string) {
-  const base = normalizeUsername(baseValue.replace(/[^a-zA-Z0-9_]/g, "")) || "user";
+  const base =
+    normalizeUsername(baseValue.replace(/[^a-zA-Z0-9_]/g, "")) || "user";
 
   let candidate = base;
   let count = 0;
@@ -79,7 +81,11 @@ async function generateUniqueUsername(baseValue: string) {
   return candidate;
 }
 
-async function ensureUserDoc(user: User, preferredUsername?: string, preferredDisplayName?: string) {
+async function ensureUserDoc(
+  user: User,
+  preferredUsername?: string,
+  preferredDisplayName?: string
+) {
   const userRef = doc(db, "users", user.uid);
   const snap = await getDoc(userRef);
 
@@ -94,9 +100,7 @@ async function ensureUserDoc(user: User, preferredUsername?: string, preferredDi
         );
 
     const displayName =
-      preferredDisplayName?.trim() ||
-      user.displayName?.trim() ||
-      username;
+      preferredDisplayName?.trim() || user.displayName?.trim() || username;
 
     await setDoc(userRef, {
       uid: user.uid,
@@ -123,8 +127,11 @@ async function ensureUserDoc(user: User, preferredUsername?: string, preferredDi
       updatedAt: serverTimestamp(),
       lastReadAt: null,
     });
+
     return;
   }
+
+  const data = snap.data();
 
   await setDoc(
     userRef,
@@ -132,17 +139,16 @@ async function ensureUserDoc(user: User, preferredUsername?: string, preferredDi
       email: user.email || "",
       photoURL: user.photoURL || "",
       updatedAt: serverTimestamp(),
-      role: isAdmin(user.uid) ? "admin" : snap.data()?.role || "user",
-      title:
-        isAdmin(user.uid)
-          ? "Admin"
-          : snap.data()?.title || getTitleByLevel(snap.data()?.level || 1),
+      role: isAdmin(user.uid) ? "admin" : data?.role || "user",
+      title: isAdmin(user.uid)
+        ? "Admin"
+        : data?.title || getTitleByLevel(data?.level || 1),
     },
     { merge: true }
   );
 }
 
-export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
+export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -164,12 +170,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     password,
     username,
     displayName,
-  }: {
-    email: string;
-    password: string;
-    username: string;
-    displayName?: string;
-  }) {
+  }: RegisterParams) {
     const usernameLower = normalizeUsername(username);
 
     if (!usernameLower) {
@@ -180,7 +181,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       throw new Error("Esse nome de usuário já existe.");
     }
 
-    const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
+    const cred = await createUserWithEmailAndPassword(
+      auth,
+      email.trim(),
+      password
+    );
 
     if (displayName?.trim()) {
       await updateProfile(cred.user, { displayName: displayName.trim() });
@@ -200,10 +205,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, loginWithGoogle, logout }}>
+    <AuthContext.Provider
+      value={{ user, loading, login, register, loginWithGoogle, logout }}
+    >
       {children}
     </AuthContext.Provider>
   );
-};
+}
 
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  return useContext(AuthContext);
+}

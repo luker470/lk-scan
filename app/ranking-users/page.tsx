@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import {
   collection,
   getDocs,
@@ -64,7 +63,9 @@ export default function RankingUsersPage() {
     <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white p-6">
       <div className="max-w-5xl mx-auto space-y-6">
         <div>
-          <h1 className="text-3xl font-bold text-cyan-400">🏆 Ranking de usuários</h1>
+          <h1 className="text-3xl font-bold text-cyan-400">
+            🏆 Ranking de usuários
+          </h1>
           <p className="text-zinc-400 text-sm mt-1">
             Ranking por XP total acumulado.
           </p>
@@ -72,9 +73,8 @@ export default function RankingUsersPage() {
 
         <div className="space-y-3">
           {items.map((item, index) => (
-            <Link
+            <div
               key={item.id}
-              href="#"
               className="flex items-center gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4"
             >
               <div className="w-8 text-center font-bold text-zinc-400">
@@ -89,7 +89,9 @@ export default function RankingUsersPage() {
                 />
               ) : (
                 <div className="h-14 w-14 rounded-full bg-zinc-800 flex items-center justify-center">
-                  {(item.displayName || item.username || "U").slice(0, 1).toUpperCase()}
+                  {(item.displayName || item.username || "U")
+                    .slice(0, 1)
+                    .toUpperCase()}
                 </div>
               )}
 
@@ -107,10 +109,14 @@ export default function RankingUsersPage() {
               </div>
 
               <div className="text-right">
-                <div className="font-bold text-cyan-300">Lv. {item.level || 1}</div>
-                <div className="text-xs text-zinc-500">{item.xpTotal || 0} XP</div>
+                <div className="font-bold text-cyan-300">
+                  Lv. {item.level || 1}
+                </div>
+                <div className="text-xs text-zinc-500">
+                  {item.xpTotal || 0} XP
+                </div>
               </div>
-            </Link>
+            </div>
           ))}
         </div>
       </div>

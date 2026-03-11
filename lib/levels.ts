@@ -27,11 +27,15 @@ export function getLevelFromXp(xpTotal: number): LevelData {
   }
 
   const levelStart = xpRequiredForLevel(level);
-  const nextLevelStart = level >= 99 ? levelStart : xpRequiredForLevel(level + 1);
+  const nextLevelStart =
+    level >= 99 ? levelStart : xpRequiredForLevel(level + 1);
   const currentLevelXp = cappedXp - levelStart;
   const xpToNext = level >= 99 ? 0 : nextLevelStart - cappedXp;
   const neededThisLevel = level >= 99 ? 1 : nextLevelStart - levelStart;
-  const progressPercent = level >= 99 ? 100 : Math.max(0, Math.min(100, (currentLevelXp / neededThisLevel) * 100));
+  const progressPercent =
+    level >= 99
+      ? 100
+      : Math.max(0, Math.min(100, (currentLevelXp / neededThisLevel) * 100));
 
   return {
     level,
