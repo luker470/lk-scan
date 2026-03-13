@@ -2,7 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+  startAfter,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 
@@ -19,6 +28,8 @@ type Manga = {
 };
 
 type OrderMode = "updated" | "created" | "az" | "views";
+
+const PAGE_SIZE = 24;
 
 function tsSeconds(v: any) {
   return v?.seconds ?? 0;
@@ -39,41 +50,66 @@ function formatStatus(status?: string) {
 export default function CatalogPage() {
   const [items, setItems] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [lastDoc, setLastDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
 
   const [search, setSearch] = useState("");
   const [genre, setGenre] = useState("Todos");
   const [status, setStatus] = useState("Todos");
   const [orderMode, setOrderMode] = useState<OrderMode>("updated");
 
-  useEffect(() => {
-    async function load() {
+  async function loadPage(reset = false) {
+    if (reset) {
       setLoading(true);
-
-      try {
-        if (!db) {
-          setItems([]);
-          return;
-        }
-
-        const snap = await getDocs(
-          query(collection(db, "mangas"), orderBy("createdAt", "desc"))
-        );
-
-        const list = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<Manga, "id">),
-        }));
-
-        setItems(list);
-      } catch (e) {
-        console.error("Erro ao carregar catálogo:", e);
-        setItems([]);
-      } finally {
-        setLoading(false);
-      }
+      setHasMore(true);
+      setLastDoc(null);
+    } else {
+      setLoadingMore(true);
     }
 
-    load();
+    try {
+      if (!db) {
+        setItems([]);
+        setHasMore(false);
+        return;
+      }
+
+      const colRef = collection(db, "mangas");
+      let qRef = query(colRef, orderBy("updatedAt", "desc"), limit(PAGE_SIZE));
+
+      if (!reset && lastDoc) {
+        qRef = query(
+          colRef,
+          orderBy("updatedAt", "desc"),
+          startAfter(lastDoc),
+          limit(PAGE_SIZE)
+        );
+      }
+
+      const snap = await getDocs(qRef);
+      const docs = snap.docs;
+
+      const list = docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Manga, "id">),
+      }));
+
+      setItems((prev) => (reset ? list : [...prev, ...list]));
+      setLastDoc(docs.length ? docs[docs.length - 1] : null);
+      setHasMore(docs.length === PAGE_SIZE);
+    } catch (e) {
+      console.error("Erro ao carregar catálogo:", e);
+      if (reset) setItems([]);
+      setHasMore(false);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
+    }
+  }
+
+  useEffect(() => {
+    loadPage(true);
   }, []);
 
   const genres = useMemo(() => {
@@ -200,59 +236,75 @@ export default function CatalogPage() {
             Nenhum mangá encontrado com esses filtros.
           </div>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
-            {filtered.map((manga) => {
-              const coverSrc = proxifyImage(manga.cover);
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">
+              {filtered.map((manga) => {
+                const coverSrc = proxifyImage(manga.cover);
 
-              return (
-                <Link
-                  key={manga.id}
-                  href={`/manga/${manga.id}`}
-                  className="group bg-zinc-900/60 rounded-2xl p-3 border border-zinc-800 hover:border-cyan-400 hover:shadow-[0_0_15px_rgba(34,211,238,0.12)] transition block"
-                >
-                  {coverSrc ? (
-                    <img
-                      src={coverSrc}
-                      alt={manga.title}
-                      className="h-52 w-full object-cover rounded-xl mb-3"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="h-52 w-full rounded-xl mb-3 flex items-center justify-center bg-zinc-800 text-zinc-400 text-sm">
-                      Sem capa
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <p className="text-sm font-semibold line-clamp-1 group-hover:text-cyan-300 transition">
-                      {manga.title}
-                    </p>
-
-                    <div className="flex flex-wrap gap-2">
-                      <span className="inline-flex items-center rounded-full border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-300">
-                        {manga.genre || "Sem gênero"}
-                      </span>
-
-                      {!!manga.status && (
-                        <span className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-300">
-                          {formatStatus(manga.status)}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="text-[11px] text-zinc-500 space-y-1">
-                      <div>
-                        {typeof manga.chaptersCount === "number"
-                          ? `${manga.chaptersCount} capítulos`
-                          : "Capítulos não informados"}
+                return (
+                  <Link
+                    key={manga.id}
+                    href={`/manga/${manga.id}`}
+                    className="group bg-zinc-900/60 rounded-2xl p-3 border border-zinc-800 hover:border-cyan-400 hover:shadow-[0_0_15px_rgba(34,211,238,0.12)] transition block"
+                  >
+                    {coverSrc ? (
+                      <img
+                        src={coverSrc}
+                        alt={manga.title}
+                        className="h-52 w-full object-cover rounded-xl mb-3"
+                        loading="lazy"
+                      />
+                    ) : (
+                      <div className="h-52 w-full rounded-xl mb-3 flex items-center justify-center bg-zinc-800 text-zinc-400 text-sm">
+                        Sem capa
                       </div>
-                      <div>{(manga.views ?? 0).toLocaleString()} views</div>
+                    )}
+
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold line-clamp-1 group-hover:text-cyan-300 transition">
+                        {manga.title}
+                      </p>
+
+                      <div className="flex flex-wrap gap-2">
+                        <span className="inline-flex items-center rounded-full border border-zinc-700 bg-black/40 px-2 py-1 text-[11px] text-zinc-300">
+                          {manga.genre || "Sem gênero"}
+                        </span>
+
+                        {!!manga.status && (
+                          <span className="inline-flex items-center rounded-full border border-cyan-500/20 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-300">
+                            {formatStatus(manga.status)}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="text-[11px] text-zinc-500 space-y-1">
+                        <div>
+                          {typeof manga.chaptersCount === "number"
+                            ? `${manga.chaptersCount} capítulos`
+                            : "Capítulos não informados"}
+                        </div>
+                        <div>{(manga.views ?? 0).toLocaleString()} views</div>
+                      </div>
                     </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
+                  </Link>
+                );
+              })}
+            </div>
+
+            <div className="pt-4 flex justify-center">
+              {hasMore ? (
+                <button
+                  onClick={() => loadPage(false)}
+                  disabled={loadingMore}
+                  className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition font-semibold disabled:opacity-50"
+                >
+                  {loadingMore ? "Carregando..." : "Carregar mais"}
+                </button>
+              ) : (
+                <div className="text-xs text-zinc-500">Todos os mangás carregados.</div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </main>

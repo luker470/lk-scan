@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
+import { collection, getDocs, limit, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import { useAuth } from "@/context/AuthContext";
@@ -15,7 +15,10 @@ interface Manga {
   id: string;
   title: string;
   cover?: string;
+  banner?: string;
   genre?: string;
+  description?: string;
+  status?: string;
   views?: number;
   weekViews?: number;
   dayViews?: number;
@@ -60,6 +63,18 @@ function formatRankValue(tab: RankingTab, manga: Manga) {
 
 function formatReaderName(item: ReaderRankItem) {
   return item.displayName || item.username || "Usuário";
+}
+
+function formatStatus(status?: string) {
+  if (!status) return "";
+  const s = status.toLowerCase();
+
+  if (s === "ongoing") return "Em andamento";
+  if (s === "completed") return "Finalizado";
+  if (s === "hiatus") return "Hiato";
+  if (s === "cancelled") return "Cancelado";
+
+  return status;
 }
 
 function RankingSidebar({
@@ -283,7 +298,11 @@ export default function Home() {
 
   useEffect(() => {
     async function fetchMangas() {
-      const q = query(collection(db, "mangas"), orderBy("createdAt", "desc"));
+      const q = query(
+        collection(db, "mangas"),
+        orderBy("updatedAt", "desc"),
+        limit(60)
+      );
       const snap = await getDocs(q);
 
       const data: Manga[] = snap.docs.map((d) => ({
@@ -296,7 +315,7 @@ export default function Home() {
 
     async function fetchReaders() {
       try {
-        const snap = await getDocs(collection(db, "users"));
+        const snap = await getDocs(query(collection(db, "users"), limit(50)));
         const data: ReaderRankItem[] = snap.docs.map((d) => ({
           id: d.id,
           ...(d.data() as Omit<ReaderRankItem, "id">),
@@ -373,6 +392,7 @@ export default function Home() {
     return [...mangas].sort((a, b) => (b.weekViews ?? 0) - (a.weekViews ?? 0)).slice(0, 10);
   }, [mangas]);
 
+  const heroManga = useMemo(() => filtered[0] || mangas[0] || null, [filtered, mangas]);
   const highlights = useMemo(() => filtered.slice(0, 10), [filtered]);
   const recentUpdated = useMemo(() => filtered.slice(0, 8), [filtered]);
 
@@ -381,8 +401,18 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 pb-12">
         <section className="mt-6 mb-8">
           <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-b from-black via-zinc-900 to-black">
-            <div className="p-6 md:p-10 flex flex-col md:flex-row items-center justify-between gap-6">
-              <div>
+            {heroManga?.banner || heroManga?.cover ? (
+              <img
+                src={proxifyImage(heroManga.banner || heroManga.cover) || ""}
+                alt={heroManga.title}
+                className="absolute inset-0 h-full w-full object-cover opacity-20"
+              />
+            ) : null}
+
+            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/85 to-black/40" />
+
+            <div className="relative p-6 md:p-10 flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="max-w-2xl">
                 <h2 className="text-2xl md:text-4xl font-extrabold text-cyan-400 drop-shadow-[0_0_12px_#00ffff]">
                   Bem-vindo ao LK-Scan
                 </h2>
@@ -390,6 +420,53 @@ export default function Home() {
                 <p className="mt-2 text-zinc-300 max-w-xl">
                   Leia mangás e manhwas online com atualização constante.
                 </p>
+
+                {heroManga && (
+                  <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/30 p-4">
+                    <div className="text-xs text-zinc-500">Em destaque</div>
+                    <div className="mt-1 text-xl font-bold">{heroManga.title}</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                      {heroManga.genre ? (
+                        <span className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
+                          {heroManga.genre}
+                        </span>
+                      ) : null}
+                      {heroManga.status ? (
+                        <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-cyan-300">
+                          {formatStatus(heroManga.status)}
+                        </span>
+                      ) : null}
+                      <span className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
+                        {(heroManga.views ?? 0).toLocaleString()} views
+                      </span>
+                    </div>
+
+                    {heroManga.description ? (
+                      <p className="mt-3 line-clamp-3 text-sm text-zinc-300">
+                        {heroManga.description}
+                      </p>
+                    ) : null}
+
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Link
+                        href={`/manga/${heroManga.id}`}
+                        className="rounded-xl bg-cyan-500 px-4 py-2 font-bold text-black hover:bg-cyan-400 transition"
+                      >
+                        Ver obra
+                      </Link>
+                      {heroManga.lastChapterNumber ? (
+                        <Link
+                          href={`/manga/${heroManga.id}/chapter/${String(
+                            heroManga.lastChapterNumber
+                          ).padStart(3, "0")}`}
+                          className="rounded-xl border border-zinc-700 px-4 py-2 hover:border-cyan-400 transition"
+                        >
+                          Ler último capítulo
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
 
                 <div className="mt-5 flex flex-wrap gap-3">
                   {user && (
@@ -400,6 +477,13 @@ export default function Home() {
                       📚 Vistos recentes
                     </Link>
                   )}
+
+                  <Link
+                    href="/catalog"
+                    className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400"
+                  >
+                    📚 Catálogo
+                  </Link>
 
                   <Link
                     href="/ranking-users"
@@ -496,7 +580,15 @@ export default function Home() {
             )}
 
             <section>
-              <h2 className="text-xl font-semibold mb-4">🆕 Atualizados</h2>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-xl font-semibold">🆕 Atualizados</h2>
+                <Link
+                  href="/catalog"
+                  className="text-sm text-cyan-300 hover:text-cyan-200"
+                >
+                  Ver catálogo →
+                </Link>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {recentUpdated.map((manga) => {
@@ -527,8 +619,15 @@ export default function Home() {
                         <div className="text-sm text-zinc-400 line-clamp-1 mt-1">
                           {manga.genre || "Sem gênero"}
                         </div>
-                        <div className="text-xs text-zinc-500 mt-3">
-                          {(manga.views ?? 0).toLocaleString()} views
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {manga.status ? (
+                            <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-300">
+                              {formatStatus(manga.status)}
+                            </span>
+                          ) : null}
+                          <span className="rounded-full border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400">
+                            {(manga.views ?? 0).toLocaleString()} views
+                          </span>
                         </div>
                       </div>
                     </Link>
@@ -573,7 +672,14 @@ export default function Home() {
                     </div>
                   )}
 
-                  <div className="p-3 text-sm font-semibold">{manga.title}</div>
+                  <div className="p-3">
+                    <div className="text-sm font-semibold line-clamp-1">{manga.title}</div>
+                    {manga.status ? (
+                      <div className="mt-2 text-[11px] text-cyan-300">
+                        {formatStatus(manga.status)}
+                      </div>
+                    ) : null}
+                  </div>
                 </Link>
               );
             })}
@@ -641,7 +747,7 @@ export default function Home() {
                   <div className="h-10 w-8 bg-zinc-800 rounded" />
                 )}
 
-                <span>{m.title}</span>
+                <span className="line-clamp-1">{m.title}</span>
               </Link>
             );
           })}

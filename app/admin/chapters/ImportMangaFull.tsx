@@ -46,7 +46,12 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
 
   const [detectedTitle, setDetectedTitle] = useState("");
   const [detectedCover, setDetectedCover] = useState("");
+  const [detectedBanner, setDetectedBanner] = useState("");
   const [detectedGenre, setDetectedGenre] = useState("");
+  const [detectedDescription, setDetectedDescription] = useState("");
+  const [detectedStatus, setDetectedStatus] = useState("");
+  const [detectedAuthor, setDetectedAuthor] = useState("");
+  const [detectedArtist, setDetectedArtist] = useState("");
   const [chapters, setChapters] = useState<ExtractChapterEntry[]>([]);
 
   const canImport = useMemo(() => {
@@ -109,7 +114,12 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
 
       setDetectedTitle(data.title || "");
       setDetectedCover(data.cover || "");
+      setDetectedBanner(data.banner || data.cover || "");
       setDetectedGenre(data.genre || "");
+      setDetectedDescription(data.description || "");
+      setDetectedStatus(data.status || "");
+      setDetectedAuthor(data.author || "");
+      setDetectedArtist(data.artist || "");
       setChapters((data.chapters || []) as ExtractChapterEntry[]);
 
       setOk(
@@ -138,7 +148,12 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
       updatedAt: serverTimestamp(),
       title: detectedTitle || "Sem título",
       cover: detectedCover || "",
+      banner: detectedBanner || detectedCover || "",
       genre: detectedGenre || "",
+      description: detectedDescription || "",
+      status: detectedStatus || "",
+      author: detectedAuthor || "",
+      artist: detectedArtist || "",
       sourceUrl: mangaUrl.trim(),
       sourceHost: (() => {
         try {
@@ -156,8 +171,8 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
     if (!mangaSnap.exists()) {
       payload.createdAt = serverTimestamp();
       payload.views = 0;
-      payload.weekViews = 0;
       payload.dayViews = 0;
+      payload.weekViews = 0;
       payload.monthViews = 0;
       payload.chaptersCount = 0;
       payload.lastChapterNumber = 0;
@@ -232,8 +247,8 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
         pages,
         sourceUrl: chapterUrl,
         views: existingData?.views ?? 0,
-        weekViews: existingData?.weekViews ?? 0,
         dayViews: existingData?.dayViews ?? 0,
+        weekViews: existingData?.weekViews ?? 0,
         monthViews: existingData?.monthViews ?? 0,
         ...(existingChapterSnap.exists()
           ? {}
@@ -302,6 +317,12 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
       let totalPages = 0;
       let maxChapter = 0;
 
+      const currentSnap = await getDocs(collection(db, "mangas", mangaId, "chapters"));
+      currentSnap.forEach((docSnap) => {
+        const n = Number(docSnap.data().number || 0);
+        if (n > maxChapter) maxChapter = n;
+      });
+
       for (let i = 0; i < chapters.length; i++) {
         const chapter = chapters[i];
         const chapterNumber =
@@ -364,6 +385,7 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
 
         if (saved.skipped) {
           skippedChapters++;
+          maxChapter = Math.max(maxChapter, chapterNumber);
           continue;
         }
 
@@ -381,7 +403,12 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
         lastChapterNumber: maxChapter || 0,
         title: detectedTitle || "Sem título",
         cover: detectedCover || "",
+        banner: detectedBanner || detectedCover || "",
         genre: detectedGenre || "",
+        description: detectedDescription || "",
+        status: detectedStatus || "",
+        author: detectedAuthor || "",
+        artist: detectedArtist || "",
         sourceUrl: mangaUrl.trim(),
         sourceHost: (() => {
           try {
@@ -454,7 +481,15 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
         </button>
       </div>
 
-      {(detectedTitle || detectedCover || detectedGenre || chapters.length > 0) && (
+      {(detectedTitle ||
+        detectedCover ||
+        detectedBanner ||
+        detectedGenre ||
+        detectedDescription ||
+        detectedStatus ||
+        detectedAuthor ||
+        detectedArtist ||
+        chapters.length > 0) && (
         <div className="rounded-xl border border-zinc-700 bg-zinc-800/40 p-3">
           <div className="text-sm text-zinc-300">Prévia detectada</div>
 
@@ -487,6 +522,27 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
               </div>
 
               <div>
+                <div className="text-xs text-zinc-500">Status</div>
+                <div className="text-sm text-zinc-300">
+                  {detectedStatus || "Não detectado"}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-zinc-500">Autor</div>
+                <div className="text-sm text-zinc-300">
+                  {detectedAuthor || "Não detectado"}
+                </div>
+              </div>
+
+              <div>
+                <div className="text-xs text-zinc-500">Artista</div>
+                <div className="text-sm text-zinc-300">
+                  {detectedArtist || "Não detectado"}
+                </div>
+              </div>
+
+              <div>
                 <div className="text-xs text-zinc-500">Capítulos encontrados</div>
                 <div className="text-sm font-semibold text-cyan-300">
                   {chapters.length}
@@ -494,6 +550,12 @@ export default function ImportMangaFull({ mangaId }: { mangaId: string }) {
               </div>
             </div>
           </div>
+
+          {detectedDescription && (
+            <div className="mt-4 rounded-xl border border-zinc-700 bg-black/20 p-3 text-sm text-zinc-300 whitespace-pre-wrap">
+              {detectedDescription}
+            </div>
+          )}
 
           {chapters.length > 0 && (
             <div className="mt-4 max-h-56 space-y-2 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900/40 p-2">

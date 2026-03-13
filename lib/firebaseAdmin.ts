@@ -1,14 +1,24 @@
-import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
+import { cert, getApp, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 
 let adminApp: App | null = null;
 
-function getPrivateKey() {
-  const key = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
-  if (!key) return null;
+function normalizePrivateKey(raw?: string | null) {
+  if (!raw) return null;
 
-  return key.replace(/\\n/g, "\n");
+  let key = raw.trim();
+
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1);
+  }
+
+  key = key.replace(/\\n/g, "\n");
+
+  return key;
 }
 
 function canInitAdmin() {
@@ -21,6 +31,8 @@ function canInitAdmin() {
 }
 
 function initAdmin() {
+  if (adminApp) return adminApp;
+
   if (!canInitAdmin()) {
     console.warn("Firebase Admin não iniciado: variáveis ausentes.");
     return null;
@@ -28,15 +40,22 @@ function initAdmin() {
 
   try {
     if (getApps().length > 0) {
-      adminApp = getApps()[0]!;
+      adminApp = getApp();
       return adminApp;
+    }
+
+    const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
+
+    if (!privateKey) {
+      console.warn("Firebase Admin não iniciado: private key ausente.");
+      return null;
     }
 
     adminApp = initializeApp({
       credential: cert({
         projectId: process.env.FIREBASE_ADMIN_PROJECT_ID,
         clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-        privateKey: getPrivateKey()!,
+        privateKey,
       }),
       storageBucket: process.env.FIREBASE_ADMIN_STORAGE_BUCKET,
     });
@@ -61,5 +80,9 @@ export function getAdminDb() {
 export function getAdminBucket() {
   const app = getAdminApp();
   if (!app) return null;
-  return getStorage(app).bucket(process.env.FIREBASE_ADMIN_STORAGE_BUCKET);
+
+  const bucketName = process.env.FIREBASE_ADMIN_STORAGE_BUCKET;
+  if (!bucketName) return null;
+
+  return getStorage(app).bucket(bucketName);
 }

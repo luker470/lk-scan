@@ -82,7 +82,9 @@ export default function ImportAutoFromUrl({
 
     if (!duplicateSnap.empty && !overwriteExisting) {
       const dup = duplicateSnap.docs[0];
-      throw new Error(`Essa sourceUrl já foi importada no capítulo ${dup.id}.`);
+      if (dup.id !== chapterId) {
+        throw new Error(`Essa sourceUrl já foi importada no capítulo ${dup.id}.`);
+      }
     }
 
     const existingData = existingChapterSnap.exists()
@@ -100,7 +102,9 @@ export default function ImportAutoFromUrl({
         pages,
         sourceUrl: chapterUrl,
         views: existingData?.views ?? 0,
+        dayViews: existingData?.dayViews ?? 0,
         weekViews: existingData?.weekViews ?? 0,
+        monthViews: existingData?.monthViews ?? 0,
         createdAt:
           existingChapterSnap.exists() && existingData?.createdAt
             ? existingData.createdAt

@@ -20,10 +20,17 @@ type MangaDocData = {
   sourceHost?: string;
   title?: string;
   cover?: string;
+  banner?: string;
   genre?: string;
+  description?: string;
+  status?: string;
+  author?: string;
+  artist?: string;
   lastChapterNumber?: number;
   autoSync?: boolean;
   syncStatus?: string;
+  lastSyncAt?: unknown;
+  lastSyncError?: string;
 };
 
 function pad3(n: number) {
@@ -211,8 +218,8 @@ export async function GET(req: NextRequest) {
               pages,
               sourceUrl: chapter.url,
               views: 0,
-              weekViews: 0,
               dayViews: 0,
+              weekViews: 0,
               monthViews: 0,
               createdAt: new Date(),
               updatedAt: new Date(),
@@ -234,7 +241,12 @@ export async function GET(req: NextRequest) {
           {
             title: mangaJson.title || mangaData.title || "Sem título",
             cover: mangaJson.cover || mangaData.cover || "",
+            banner: mangaJson.banner || mangaData.banner || mangaJson.cover || "",
             genre: mangaJson.genre || mangaData.genre || "",
+            description: mangaJson.description || mangaData.description || "",
+            status: mangaJson.status || mangaData.status || "",
+            author: mangaJson.author || mangaData.author || "",
+            artist: mangaJson.artist || mangaData.artist || "",
             chaptersCount: afterSnap.size,
             lastChapterNumber: maxChapterNumber,
             updatedAt: new Date(),

@@ -19,32 +19,67 @@ function isAllowedChapterUrl(urlStr: string) {
   }
 }
 
-function extractImageUrlsFromHtml(html: string) {
-  const matches =
-    html.match(
-      /https?:\/\/[^\s"'<>]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]+)?/gi
-    ) || [];
-
-  const filtered = matches.filter((u) =>
-    u.includes("/wp-content/uploads/WP-manga/data/")
-  );
-
-  const unique = Array.from(new Set(filtered));
-
+function sortImageUrls(urls: string[]) {
   const num = (u: string) => {
     const clean = u.split("?")[0];
     const m = clean.match(/(\d+)\.(jpe?g|png|webp|gif)$/i);
     return m ? parseInt(m[1], 10) : Number.POSITIVE_INFINITY;
   };
 
-  unique.sort((a, b) => {
+  return [...urls].sort((a, b) => {
     const na = num(a);
     const nb = num(b);
     if (na !== nb) return na - nb;
     return a.localeCompare(b);
   });
+}
 
-  return unique;
+function normalizeUrl(url: string) {
+  return url.replace(/&amp;/g, "&").trim();
+}
+
+function extractImageUrlsFromHtml(html: string) {
+  const found = new Set<string>();
+
+  const directMatches =
+    html.match(
+      /https?:\/\/[^\s"'<>]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]+)?/gi
+    ) || [];
+
+  for (const item of directMatches) {
+    const url = normalizeUrl(item);
+    if (url.includes("/wp-content/uploads/WP-manga/data/")) {
+      found.add(url);
+    }
+  }
+
+  const attrPatterns = [
+    /(?:data-src|data-lazy-src|src)=["']([^"']+)["']/gi,
+    /srcset=["']([^"']+)["']/gi,
+  ];
+
+  for (const pattern of attrPatterns) {
+    for (const match of html.matchAll(pattern)) {
+      const raw = match[1] || "";
+      const candidates = raw
+        .split(",")
+        .map((part) => part.trim().split(" ")[0])
+        .filter(Boolean);
+
+      for (const candidate of candidates) {
+        const url = normalizeUrl(candidate);
+        if (
+          /^https?:\/\//i.test(url) &&
+          /\.(jpe?g|png|webp|gif)(\?.*)?$/i.test(url) &&
+          url.includes("/wp-content/uploads/WP-manga/data/")
+        ) {
+          found.add(url);
+        }
+      }
+    }
+  }
+
+  return sortImageUrls(Array.from(found));
 }
 
 export async function POST(req: Request) {

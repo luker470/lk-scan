@@ -34,12 +34,13 @@ export async function generateMetadata({
       title?: string;
       description?: string;
       cover?: string;
+      banner?: string;
     };
 
     const title = manga.title || "Mangá";
     const description =
       manga.description || `Leia ${title} online no LK-Scan.`;
-    const image = manga.cover || "/logo.png";
+    const image = manga.banner || manga.cover || "/logo.png";
 
     return {
       title,

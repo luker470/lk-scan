@@ -76,6 +76,14 @@ function extractTitle(html: string) {
   return "Sem título";
 }
 
+function toAbsoluteUrl(href: string, baseUrl: string) {
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
 function extractCover(html: string, baseUrl: string) {
   const ogImage = html.match(
     /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"]+)["']/i
@@ -109,12 +117,46 @@ function extractCover(html: string, baseUrl: string) {
   return "";
 }
 
+function extractBanner(html: string, baseUrl: string, fallbackCover: string) {
+  const twitterImage = html.match(
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"]+)["']/i
+  );
+  if (twitterImage?.[1]) {
+    try {
+      return new URL(twitterImage[1], baseUrl).toString();
+    } catch {
+      return twitterImage[1].trim();
+    }
+  }
+
+  const imgMatches = Array.from(
+    html.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi)
+  ).map((m) => m[1]);
+
+  const preferred = imgMatches.find(
+    (src) =>
+      /banner|background|bg-|cover|capa|thumb|poster|wp-content/i.test(src) &&
+      !/logo|avatar|icon/i.test(src)
+  );
+
+  if (preferred) {
+    try {
+      return new URL(preferred, baseUrl).toString();
+    } catch {
+      return preferred.trim();
+    }
+  }
+
+  return fallbackCover || "";
+}
+
 function extractGenres(html: string) {
   const genres = new Set<string>();
 
   const labelBlocks = [
-    /(?:Genre|Genres|Gênero|Gêneros)[\s\S]{0,500}/gi,
-    /(?:Tipo|Tags)[\s\S]{0,500}/gi,
+    /(?:Genre|Genres|Gênero|Gêneros)[\s\S]{0,600}/gi,
+    /(?:Tipo|Tags)[\s\S]{0,600}/gi,
+    /(?:Categories|Category|Categorias)[\s\S]{0,600}/gi,
   ];
 
   for (const pattern of labelBlocks) {
@@ -130,6 +172,92 @@ function extractGenres(html: string) {
   }
 
   return Array.from(genres).join(", ");
+}
+
+function extractDescription(html: string) {
+  const ogDescription = html.match(
+    /<meta[^>]+property=["']og:description["'][^>]+content=["']([^"]+)["']/i
+  );
+  if (ogDescription?.[1]) {
+    return normalizeWhitespace(decodeHtmlEntities(ogDescription[1]));
+  }
+
+  const metaDescription = html.match(
+    /<meta[^>]+name=["']description["'][^>]+content=["']([^"]+)["']/i
+  );
+  if (metaDescription?.[1]) {
+    return normalizeWhitespace(decodeHtmlEntities(metaDescription[1]));
+  }
+
+  const summaryPatterns = [
+    /<div[^>]*class=["'][^"']*(?:summary__content|description-summary|manga-excerpt|post-content_item|summary-content)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*class=["'][^"']*(?:summary__content_show|summary__content)[^"']*["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<p[^>]*>([\s\S]{40,1200}?)<\/p>/i,
+  ];
+
+  for (const pattern of summaryPatterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) {
+      const text = stripTags(match[1]);
+      if (text.length >= 30) return text;
+    }
+  }
+
+  return "";
+}
+
+function extractFieldValue(html: string, labels: string[]) {
+  for (const label of labels) {
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const textPattern = new RegExp(
+      `${escaped}[\\s\\S]{0,250}?<div[^>]*class=["'][^"']*(?:summary-content|post-content_item|summary-content-right)[^"']*["'][^>]*>([\\s\\S]*?)<\\/div>`,
+      "i"
+    );
+    const textMatch = html.match(textPattern);
+    if (textMatch?.[1]) {
+      const value = stripTags(textMatch[1]);
+      if (value) return value;
+    }
+
+    const simplePattern = new RegExp(
+      `${escaped}[\\s\\S]{0,180}?(?:<a[^>]*>(.*?)<\\/a>|<span[^>]*>(.*?)<\\/span>|<div[^>]*>(.*?)<\\/div>)`,
+      "i"
+    );
+    const simpleMatch = html.match(simplePattern);
+    const raw = simpleMatch?.[1] || simpleMatch?.[2] || simpleMatch?.[3];
+    if (raw) {
+      const value = stripTags(raw);
+      if (value) return value;
+    }
+  }
+
+  return "";
+}
+
+function extractStatus(html: string) {
+  return extractFieldValue(html, [
+    "Status",
+    "Situação",
+    "Estado",
+  ]);
+}
+
+function extractAuthor(html: string) {
+  return extractFieldValue(html, [
+    "Author",
+    "Autor",
+    "Authors",
+    "Autores",
+  ]);
+}
+
+function extractArtist(html: string) {
+  return extractFieldValue(html, [
+    "Artist",
+    "Artista",
+    "Artists",
+  ]);
 }
 
 function chapterNumberFromText(text: string) {
@@ -157,14 +285,6 @@ function chapterNumberFromUrl(url: string) {
   }
 
   return null;
-}
-
-function toAbsoluteUrl(href: string, baseUrl: string) {
-  try {
-    return new URL(href, baseUrl).toString();
-  } catch {
-    return null;
-  }
 }
 
 function looksLikeChapter(url: string, text: string) {
@@ -332,7 +452,12 @@ export async function POST(req: Request) {
 
       const title = extractTitle(html);
       const cover = extractCover(html, mangaUrl);
+      const banner = extractBanner(html, mangaUrl, cover);
       const genre = extractGenres(html);
+      const description = extractDescription(html);
+      const status = extractStatus(html);
+      const author = extractAuthor(html);
+      const artist = extractArtist(html);
       const chapters = extractChapterLinks(html, mangaUrl);
 
       if (chapters.length === 0) {
@@ -350,7 +475,12 @@ export async function POST(req: Request) {
         ok: true,
         title,
         cover,
+        banner,
         genre,
+        description,
+        status,
+        author,
+        artist,
         chapters,
         chaptersCount: chapters.length,
       });
