@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
-import { buildUpdatedUserProgress, getDayKey, getMonthKey, getWeekKey } from "@/lib/userProgress";
+import {
+  buildUpdatedUserProgress,
+  getDayKey,
+  getMonthKey,
+  getWeekKey,
+} from "@/lib/userProgress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,10 +19,21 @@ export async function POST(req: Request) {
     const uid = String(body?.uid || "").trim();
 
     if (!mangaId || !chapterId) {
-      return NextResponse.json({ ok: false, error: "Missing mangaId or chapterId" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Missing mangaId or chapterId" },
+        { status: 400 }
+      );
     }
 
     const db = getAdminDb();
+
+    if (!db) {
+      return NextResponse.json(
+        { ok: false, error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
     const now = new Date();
 
     const dayKey = getDayKey(now);
@@ -31,7 +47,10 @@ export async function POST(req: Request) {
     const chapterSnap = await chapterRef.get();
 
     if (!mangaSnap.exists || !chapterSnap.exists) {
-      return NextResponse.json({ ok: false, error: "Manga or chapter not found" }, { status: 404 });
+      return NextResponse.json(
+        { ok: false, error: "Manga or chapter not found" },
+        { status: 404 }
+      );
     }
 
     const batch = db.batch();
@@ -136,10 +155,14 @@ export async function POST(req: Request) {
     await batch.commit();
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("POST /api/views error:", error);
+
+    const message =
+      error instanceof Error ? error.message : "Internal error";
+
     return NextResponse.json(
-      { ok: false, error: error?.message || "Internal error" },
+      { ok: false, error: message },
       { status: 500 }
     );
   }

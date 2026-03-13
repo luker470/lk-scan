@@ -1,6 +1,12 @@
 import type { MetadataRoute } from "next";
 import { getAdminDb } from "@/lib/firebaseAdmin";
 
+type MangaDoc = {
+  updatedAt?: {
+    toDate?: () => Date;
+  };
+};
+
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
   const db = getAdminDb();
@@ -38,11 +44,16 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     },
   ];
 
+  if (!db) {
+    console.warn("Sitemap: Firebase Admin indisponível. Retornando apenas rotas estáticas.");
+    return urls;
+  }
+
   try {
     const mangasSnap = await db.collection("mangas").get();
 
     for (const mangaDoc of mangasSnap.docs) {
-      const mangaData = mangaDoc.data() as any;
+      const mangaData = mangaDoc.data() as MangaDoc;
 
       urls.push({
         url: `${baseUrl}/manga/${mangaDoc.id}`,

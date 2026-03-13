@@ -14,6 +14,14 @@ export async function GET(req: Request) {
     }
 
     const db = getAdminDb();
+
+    if (!db) {
+      return NextResponse.json(
+        { ok: false, items: [], error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
     const snap = await db
       .collection("users")
       .doc(uid)
@@ -28,8 +36,9 @@ export async function GET(req: Request) {
     }));
 
     return NextResponse.json({ ok: true, items });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("GET /api/history error:", error);
+
     return NextResponse.json({ ok: false, items: [] }, { status: 500 });
   }
 }
@@ -46,10 +55,21 @@ export async function POST(req: Request) {
     const chapterTitle = String(body?.chapterTitle || "").trim();
 
     if (!uid || !mangaId || !chapterId) {
-      return NextResponse.json({ ok: false, error: "Missing fields" }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Missing fields" },
+        { status: 400 }
+      );
     }
 
     const db = getAdminDb();
+
+    if (!db) {
+      return NextResponse.json(
+        { ok: false, error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
     const now = new Date();
     const docId = `${mangaId}_${chapterId}`;
 
@@ -79,10 +99,14 @@ export async function POST(req: Request) {
     );
 
     return NextResponse.json({ ok: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("POST /api/history error:", error);
+
+    const message =
+      error instanceof Error ? error.message : "Internal error";
+
     return NextResponse.json(
-      { ok: false, error: error?.message || "Internal error" },
+      { ok: false, error: message },
       { status: 500 }
     );
   }

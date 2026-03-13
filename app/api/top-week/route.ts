@@ -7,6 +7,13 @@ export async function GET() {
   try {
     const db = getAdminDb();
 
+    if (!db) {
+      return NextResponse.json(
+        { ok: false, error: "Firebase Admin não configurado.", items: [] },
+        { status: 500 }
+      );
+    }
+
     const snap = await db
       .collection("mangas")
       .orderBy("views", "desc")
@@ -21,7 +28,7 @@ export async function GET() {
     return NextResponse.json({ ok: true, items });
   } catch (e) {
     return NextResponse.json(
-      { error: "Failed", details: String(e) },
+      { ok: false, error: "Failed", details: String(e), items: [] },
       { status: 500 }
     );
   }

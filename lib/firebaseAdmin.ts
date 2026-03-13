@@ -1,76 +1,65 @@
-import admin from "firebase-admin";
+import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+import { getStorage } from "firebase-admin/storage";
 
-let _inited = false;
+let adminApp: App | null = null;
 
 function getPrivateKey() {
   const key = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
-  if (!key) return undefined;
+  if (!key) return null;
 
-  // remove aspas externas se existirem
-  let cleaned = key.trim();
-
-  if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
-    cleaned = cleaned.slice(1, -1);
-  }
-
-  // converte \n em quebra real
-  return cleaned.replace(/\\n/g, "\n");
+  return key.replace(/\\n/g, "\n");
 }
 
-function getAdminApp() {
-  if (admin.apps.length) return admin.app();
-
-  const projectId = process.env.FIREBASE_ADMIN_PROJECT_ID;
-  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
-  const privateKey = getPrivateKey();
-  const storageBucket =
-    process.env.FIREBASE_ADMIN_STORAGE_BUCKET || `${projectId}.appspot.com`;
-
-  if (projectId && clientEmail && privateKey) {
-    try {
-      admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
-        storageBucket,
-      });
-    } catch (error) {
-      console.error("❌ Erro ao inicializar Firebase Admin:", error);
-      throw error;
-    }
-  } else {
-    console.warn("⚠️ Firebase Admin env não configurado corretamente.");
-    admin.initializeApp();
-  }
-
-  return admin.app();
+function canInitAdmin() {
+  return Boolean(
+    process.env.FIREBASE_ADMIN_PROJECT_ID &&
+      process.env.FIREBASE_ADMIN_CLIENT_EMAIL &&
+      process.env.FIREBASE_ADMIN_PRIVATE_KEY &&
+      process.env.FIREBASE_ADMIN_STORAGE_BUCKET
+  );
 }
 
-function ensureSettings() {
-  if (_inited) return;
-  _inited = true;
+function initAdmin() {
+  if (!canInitAdmin()) {
+    console.warn("Firebase Admin não iniciado: variáveis ausentes.");
+    return null;
+  }
 
   try {
-    admin.firestore().settings({ ignoreUndefinedProperties: true });
-  } catch {
-    // pode falhar em hot reload/dev
+    if (getApps().length > 0) {
+      adminApp = getApps()[0]!;
+      return adminApp;
+    }
+
+    adminApp = initializeApp({
+      credential: cert({
+        projectId: process.env.FIREBASE_ADMIN_PROJECT_ID,
+        clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
+        privateKey: getPrivateKey()!,
+      }),
+      storageBucket: process.env.FIREBASE_ADMIN_STORAGE_BUCKET,
+    });
+
+    return adminApp;
+  } catch (error) {
+    console.error("Erro ao inicializar Firebase Admin:", error);
+    return null;
   }
+}
+
+export function getAdminApp() {
+  return adminApp ?? initAdmin();
 }
 
 export function getAdminDb() {
-  getAdminApp();
-  ensureSettings();
-  return admin.firestore();
+  const app = getAdminApp();
+  if (!app) return null;
+  return getFirestore(app);
 }
 
 export function getAdminBucket() {
-  getAdminApp();
-  return admin.storage().bucket();
-}
-
-export function getAdminAuth() {
-  getAdminApp();
-  return admin.auth();
+  const app = getAdminApp();
+  if (!app) return null;
+  return getStorage(app).bucket(process.env.FIREBASE_ADMIN_STORAGE_BUCKET);
 }

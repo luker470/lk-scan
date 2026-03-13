@@ -34,6 +34,13 @@ export async function PATCH(req: Request) {
 
   try {
     const db = getAdminDb();
+
+    if (!db) {
+      return new NextResponse("Firebase Admin não configurado.", {
+        status: 500,
+      });
+    }
+
     const body = await req.json();
 
     const mangaId = String(body?.mangaId || "");
@@ -56,8 +63,9 @@ export async function PATCH(req: Request) {
     await db.collection("mangas").doc(mangaId).set(payload, { merge: true });
 
     return new NextResponse("OK");
-  } catch (e: any) {
-    return new NextResponse(e?.message || "Failed", { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed";
+    return new NextResponse(message, { status: 500 });
   }
 }
 
@@ -68,6 +76,13 @@ export async function DELETE(req: Request) {
 
   try {
     const db = getAdminDb();
+
+    if (!db) {
+      return new NextResponse("Firebase Admin não configurado.", {
+        status: 500,
+      });
+    }
+
     const { searchParams } = new URL(req.url);
     const mangaId = searchParams.get("mangaId") || "";
 
@@ -88,7 +103,8 @@ export async function DELETE(req: Request) {
     await mangaRef.delete();
 
     return new NextResponse("Deleted");
-  } catch (e: any) {
-    return new NextResponse(e?.message || "Failed", { status: 500 });
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed";
+    return new NextResponse(message, { status: 500 });
   }
 }

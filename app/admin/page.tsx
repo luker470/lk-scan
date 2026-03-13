@@ -1,7 +1,14 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  addDoc,
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 
 import { useAuth } from "@/context/AuthContext";
@@ -12,7 +19,27 @@ import ImportChapterLinks from "./chapters/ImportChapterLinks";
 import ImportMangaFull from "./chapters/ImportMangaFull";
 import ImportAutoFromUrl from "./chapters/ImportAutoFromUrl";
 
-type TabKey = "usar" | "criar" | "editar" | "importar";
+type TabKey = "dashboard" | "usar" | "criar" | "editar" | "importar";
+
+type MangaStats = {
+  totalMangas: number;
+  totalViews: number;
+  totalWeekViews: number;
+  totalChapters: number;
+  latestTitles: string[];
+  topTitles: string[];
+};
+
+type MangaDoc = {
+  id: string;
+  title?: string;
+  genre?: string;
+  cover?: string;
+  views?: number;
+  weekViews?: number;
+  chaptersCount?: number;
+  updatedAt?: any;
+};
 
 function cleanId(s: string) {
   return s.trim().replace(/\s+/g, "");
@@ -50,10 +77,15 @@ function TabButton({
   );
 }
 
+function tsSeconds(v: any) {
+  return v?.seconds ?? 0;
+}
+
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
 
-  const [tab, setTab] = useState<TabKey>("usar");
+  const [tab, setTab] = useState<TabKey>("dashboard");
+
   const [title, setTitle] = useState("");
   const [genre, setGenre] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
@@ -62,7 +94,81 @@ export default function AdminPage() {
   const [mangaId, setMangaId] = useState<string>("");
   const [manualId, setManualId] = useState("");
 
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [stats, setStats] = useState<MangaStats>({
+    totalMangas: 0,
+    totalViews: 0,
+    totalWeekViews: 0,
+    totalChapters: 0,
+    latestTitles: [],
+    topTitles: [],
+  });
+
+  const [previewCover, setPreviewCover] = useState("");
+
   const mangaIdToUse = useMemo(() => cleanId(mangaId), [mangaId]);
+
+  useEffect(() => {
+    setPreviewCover(coverUrl.trim());
+  }, [coverUrl]);
+
+  useEffect(() => {
+    async function loadStats() {
+      setStatsLoading(true);
+
+      try {
+        const snap = await getDocs(
+          query(collection(db, "mangas"), orderBy("createdAt", "desc"))
+        );
+
+        const items = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<MangaDoc, "id">),
+        })) as MangaDoc[];
+
+        const totalMangas = items.length;
+        const totalViews = items.reduce(
+          (sum, item) => sum + Number(item.views || 0),
+          0
+        );
+        const totalWeekViews = items.reduce(
+          (sum, item) => sum + Number(item.weekViews || 0),
+          0
+        );
+        const totalChapters = items.reduce(
+          (sum, item) => sum + Number(item.chaptersCount || 0),
+          0
+        );
+
+        const latestTitles = [...items]
+          .sort((a, b) => tsSeconds(b.updatedAt) - tsSeconds(a.updatedAt))
+          .slice(0, 5)
+          .map((item) => item.title || "Sem título");
+
+        const topTitles = [...items]
+          .sort((a, b) => Number(b.views || 0) - Number(a.views || 0))
+          .slice(0, 5)
+          .map((item) => item.title || "Sem título");
+
+        setStats({
+          totalMangas,
+          totalViews,
+          totalWeekViews,
+          totalChapters,
+          latestTitles,
+          topTitles,
+        });
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setStatsLoading(false);
+      }
+    }
+
+    if (!authLoading && user && isAdmin(user.uid)) {
+      loadStats();
+    }
+  }, [authLoading, user]);
 
   if (authLoading) {
     return (
@@ -88,6 +194,9 @@ export default function AdminPage() {
     );
   }
 
+  const adminUid = user.uid;
+  const adminLabel = user.email || adminUid;
+
   async function handleCreateManga() {
     const t = title.trim();
     const g = genre.trim();
@@ -111,7 +220,9 @@ export default function AdminPage() {
         genre: g,
         cover: c,
         views: 0,
+        dayViews: 0,
         weekViews: 0,
+        monthViews: 0,
         chaptersCount: 0,
         lastChapterNumber: 0,
         createdAt: serverTimestamp(),
@@ -150,6 +261,7 @@ export default function AdminPage() {
     setTitle("");
     setGenre("");
     setCoverUrl("");
+    setPreviewCover("");
   }
 
   async function handleCopyId() {
@@ -164,11 +276,6 @@ export default function AdminPage() {
   }
 
   async function handleEditManga() {
-    if (!user) {
-      alert("Login necessário.");
-      return;
-    }
-
     if (!mangaIdToUse) {
       alert("Selecione um mangá primeiro.");
       return;
@@ -178,7 +285,7 @@ export default function AdminPage() {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
-        "x-user-id": user.uid,
+        "x-user-id": adminUid,
       },
       body: JSON.stringify({
         mangaId: mangaIdToUse,
@@ -199,11 +306,6 @@ export default function AdminPage() {
   }
 
   async function handleDeleteManga() {
-    if (!user) {
-      alert("Login necessário.");
-      return;
-    }
-
     if (!mangaIdToUse) {
       alert("Selecione um mangá primeiro.");
       return;
@@ -217,7 +319,7 @@ export default function AdminPage() {
       {
         method: "DELETE",
         headers: {
-          "x-user-id": user.uid,
+          "x-user-id": adminUid,
         },
       }
     );
@@ -231,66 +333,221 @@ export default function AdminPage() {
 
     alert("Excluído!");
     handleClearId();
-    setTab("usar");
+    setTab("dashboard");
   }
 
   return (
-    <main className="min-h-screen bg-black text-white p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+    <main className="min-h-screen bg-black text-white p-4 md:p-6">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <section className="rounded-3xl border border-zinc-800 bg-gradient-to-b from-zinc-900/80 to-black p-5 md:p-6">
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
             <div>
-              <div className="text-xl font-bold text-cyan-400">⚙️ Painel Admin</div>
-              <div className="text-sm text-zinc-400">
-                MangaId em uso:{" "}
+              <div className="text-sm text-zinc-400">Painel avançado</div>
+              <h1 className="text-2xl md:text-3xl font-extrabold text-cyan-400">
+                LK-Scan Admin Pro
+              </h1>
+              <div className="mt-2 text-sm text-zinc-400">
+                Manga em uso:{" "}
                 {mangaIdToUse ? (
-                  <b className="text-cyan-300">{mangaIdToUse}</b>
+                  <span className="text-cyan-300 font-semibold">
+                    {mangaIdToUse}
+                  </span>
                 ) : (
-                  <span className="text-zinc-400">nenhum</span>
+                  <span>nenhum selecionado</span>
                 )}
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <TabButton active={tab === "usar"} onClick={() => setTab("usar")}>
-                📚 Lista
-              </TabButton>
-
-              <TabButton active={tab === "criar"} onClick={() => setTab("criar")}>
-                ➕ Criar
-              </TabButton>
-
-              <TabButton active={tab === "editar"} onClick={() => setTab("editar")}>
-                ✏️ Editar
-              </TabButton>
-
-              <TabButton active={tab === "importar"} onClick={() => setTab("importar")}>
-                📥 Importar
-              </TabButton>
+              <button
+                onClick={() => setTab("dashboard")}
+                className="px-4 py-2 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition"
+              >
+                Dashboard
+              </button>
 
               {mangaIdToUse && (
                 <button
                   onClick={handleCopyId}
-                  className="px-4 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition text-sm font-semibold"
+                  className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400 hover:text-cyan-300 transition"
                 >
-                  📋 Copiar ID
+                  Copiar ID
                 </button>
               )}
 
               <button
                 onClick={handleClearId}
-                className="px-4 py-2 rounded-xl border border-red-600 text-red-200 hover:bg-red-500/10 transition text-sm font-semibold"
+                className="px-4 py-2 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition"
               >
-                Limpar
+                Limpar seleção
               </button>
             </div>
           </div>
-        </div>
+        </section>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="flex flex-wrap gap-2">
+            <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
+              📊 Dashboard
+            </TabButton>
+            <TabButton active={tab === "usar"} onClick={() => setTab("usar")}>
+              📚 Selecionar mangá
+            </TabButton>
+            <TabButton active={tab === "criar"} onClick={() => setTab("criar")}>
+              ➕ Criar mangá
+            </TabButton>
+            <TabButton active={tab === "editar"} onClick={() => setTab("editar")}>
+              ✏️ Editar / Excluir
+            </TabButton>
+            <TabButton active={tab === "importar"} onClick={() => setTab("importar")}>
+              📥 Importar capítulos
+            </TabButton>
+          </div>
+        </section>
+
+        {tab === "dashboard" && (
+          <section className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <div className="text-sm text-zinc-400">Mangás cadastrados</div>
+                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+                  {statsLoading ? "..." : stats.totalMangas}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <div className="text-sm text-zinc-400">Capítulos totais</div>
+                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+                  {statsLoading ? "..." : stats.totalChapters}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <div className="text-sm text-zinc-400">Views totais</div>
+                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+                  {statsLoading ? "..." : stats.totalViews.toLocaleString()}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <div className="text-sm text-zinc-400">Views da semana</div>
+                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+                  {statsLoading ? "..." : stats.totalWeekViews.toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">⚡ Ações rápidas</h2>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    onClick={() => setTab("criar")}
+                    className="rounded-xl bg-cyan-500 p-4 text-left font-bold text-black hover:bg-cyan-400 transition"
+                  >
+                    Criar novo mangá
+                  </button>
+
+                  <button
+                    onClick={() => setTab("usar")}
+                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition"
+                  >
+                    Escolher mangá
+                  </button>
+
+                  <button
+                    onClick={() => setTab("editar")}
+                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition"
+                  >
+                    Editar informações
+                  </button>
+
+                  <button
+                    onClick={() => setTab("importar")}
+                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition"
+                  >
+                    Importar capítulos
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">🧠 Estado atual</h2>
+
+                <div className="space-y-3 text-sm">
+                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
+                    <span className="text-zinc-400">Mangá selecionado: </span>
+                    <span className="text-zinc-200 font-semibold">
+                      {mangaIdToUse || "nenhum"}
+                    </span>
+                  </div>
+
+                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
+                    <span className="text-zinc-400">Aba atual: </span>
+                    <span className="text-zinc-200 font-semibold">{tab}</span>
+                  </div>
+
+                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
+                    <span className="text-zinc-400">Admin logado: </span>
+                    <span className="text-zinc-200 font-semibold">
+                      {adminLabel}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-2">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">
+                  🆕 Últimos atualizados
+                </h2>
+
+                <div className="space-y-2">
+                  {stats.latestTitles.length === 0 ? (
+                    <div className="text-sm text-zinc-500">Sem dados.</div>
+                  ) : (
+                    stats.latestTitles.map((item, idx) => (
+                      <div
+                        key={`${item}-${idx}`}
+                        className="rounded-xl border border-zinc-800 bg-black/20 p-3"
+                      >
+                        {idx + 1}. {item}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">
+                  🔥 Mais vistos
+                </h2>
+
+                <div className="space-y-2">
+                  {stats.topTitles.length === 0 ? (
+                    <div className="text-sm text-zinc-500">Sem dados.</div>
+                  ) : (
+                    stats.topTitles.map((item, idx) => (
+                      <div
+                        key={`${item}-${idx}`}
+                        className="rounded-xl border border-zinc-800 bg-black/20 p-3"
+                      >
+                        {idx + 1}. {item}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
 
         {tab === "usar" && (
-          <div className="space-y-6">
+          <section className="space-y-6">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
-              <h2 className="text-xl font-bold text-cyan-400">🔑 Usar MangaId existente</h2>
+              <h2 className="text-xl font-bold text-cyan-400">🔎 Selecionar mangá</h2>
 
               <div className="flex flex-col md:flex-row gap-3">
                 <input
@@ -298,14 +555,14 @@ export default function AdminPage() {
                   value={manualId}
                   onChange={(e) => setManualId(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleUseExistingId()}
-                  className="flex-1 p-3 rounded bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                  className="flex-1 p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
                 />
 
                 <button
                   onClick={handleUseExistingId}
-                  className="px-4 py-3 rounded bg-cyan-500 hover:bg-cyan-600 font-bold text-black transition"
+                  className="px-5 py-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-black font-bold transition"
                 >
-                  Usar este MangaId
+                  Usar MangaId
                 </button>
               </div>
             </div>
@@ -315,98 +572,200 @@ export default function AdminPage() {
                 onSelect={(m) => {
                   setMangaId(m.id);
                   setManualId(m.id);
-                  alert("Mangá selecionado!");
                   setTab("importar");
                 }}
               />
             </div>
-          </div>
+          </section>
         )}
 
         {tab === "criar" && (
-          <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-            <input
-              placeholder="Título"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full p-3 bg-zinc-800 rounded"
-            />
+          <section className="grid gap-6 lg:grid-cols-[1fr_320px]">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
+              <h2 className="text-xl font-bold text-cyan-400">➕ Criar mangá</h2>
 
-            <input
-              placeholder="Gênero"
-              value={genre}
-              onChange={(e) => setGenre(e.target.value)}
-              className="w-full p-3 bg-zinc-800 rounded"
-            />
+              <div className="grid gap-4">
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Título</div>
+                  <input
+                    placeholder="Ex: Solo Leveling"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                  />
+                </label>
 
-            <input
-              placeholder="Capa"
-              value={coverUrl}
-              onChange={(e) => setCoverUrl(e.target.value)}
-              className="w-full p-3 bg-zinc-800 rounded"
-            />
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Gênero</div>
+                  <input
+                    placeholder="Ex: Ação, Fantasia"
+                    value={genre}
+                    onChange={(e) => setGenre(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                  />
+                </label>
 
-            <button
-              onClick={handleCreateManga}
-              disabled={loading}
-              className="bg-cyan-500 p-3 rounded font-bold text-black disabled:opacity-50"
-            >
-              {loading ? "Criando..." : "Criar"}
-            </button>
-          </div>
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Capa (URL)</div>
+                  <input
+                    placeholder="https://..."
+                    value={coverUrl}
+                    onChange={(e) => setCoverUrl(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                  />
+                </label>
+
+                <button
+                  onClick={handleCreateManga}
+                  disabled={loading}
+                  className="w-full md:w-fit px-6 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition disabled:opacity-50"
+                >
+                  {loading ? "Criando..." : "Criar mangá"}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+              <h2 className="text-lg font-bold text-cyan-400 mb-4">👁 Prévia</h2>
+
+              <div className="rounded-2xl overflow-hidden border border-zinc-800 bg-black/30">
+                {previewCover ? (
+                  <img
+                    src={previewCover}
+                    alt={title || "Prévia"}
+                    className="w-full h-80 object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-80 flex items-center justify-center text-zinc-500">
+                    Sem capa
+                  </div>
+                )}
+
+                <div className="p-4 space-y-2">
+                  <div className="font-bold text-lg">{title || "Título do mangá"}</div>
+                  <div className="text-sm text-zinc-400">{genre || "Gênero"}</div>
+                </div>
+              </div>
+            </div>
+          </section>
         )}
 
         {tab === "editar" && (
-          <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-            <input
-              placeholder="Novo título"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full p-3 bg-zinc-800 rounded"
-            />
+          <section className="grid gap-6 lg:grid-cols-[1fr_320px]">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
+              <h2 className="text-xl font-bold text-cyan-400">✏️ Editar mangá</h2>
 
-            <input
-              placeholder="Novo gênero"
-              value={genre}
-              onChange={(e) => setGenre(e.target.value)}
-              className="w-full p-3 bg-zinc-800 rounded"
-            />
+              {!mangaIdToUse ? (
+                <div className="rounded-xl border border-zinc-800 bg-black/30 p-4 text-zinc-400">
+                  Selecione um mangá primeiro na aba <b>Selecionar mangá</b>.
+                </div>
+              ) : (
+                <>
+                  <label className="space-y-1 block">
+                    <div className="text-sm text-zinc-300">Novo título</div>
+                    <input
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
 
-            <input
-              placeholder="Nova capa"
-              value={coverUrl}
-              onChange={(e) => setCoverUrl(e.target.value)}
-              className="w-full p-3 bg-zinc-800 rounded"
-            />
+                  <label className="space-y-1 block">
+                    <div className="text-sm text-zinc-300">Novo gênero</div>
+                    <input
+                      value={genre}
+                      onChange={(e) => setGenre(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
 
-            <button
-              onClick={handleEditManga}
-              className="bg-cyan-500 p-3 rounded font-bold text-black"
-            >
-              Salvar
-            </button>
+                  <label className="space-y-1 block">
+                    <div className="text-sm text-zinc-300">Nova capa</div>
+                    <input
+                      value={coverUrl}
+                      onChange={(e) => setCoverUrl(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
 
-            <button
-              onClick={handleDeleteManga}
-              className="border border-red-500 p-3 rounded"
-            >
-              Excluir
-            </button>
-          </div>
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <button
+                      onClick={handleEditManga}
+                      className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition"
+                    >
+                      Salvar alterações
+                    </button>
+
+                    <button
+                      onClick={handleDeleteManga}
+                      className="px-5 py-3 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition"
+                    >
+                      Excluir mangá
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+              <h2 className="text-lg font-bold text-cyan-400 mb-4">📌 Seleção atual</h2>
+
+              <div className="space-y-3 text-sm">
+                <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
+                  <span className="text-zinc-400">MangaId:</span>
+                  <div className="break-all text-zinc-200 mt-1">
+                    {mangaIdToUse || "nenhum"}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
+                  <span className="text-zinc-400">Prévia capa:</span>
+                  {previewCover ? (
+                    <img
+                      src={previewCover}
+                      alt="Prévia"
+                      className="mt-3 rounded-xl w-full h-56 object-cover"
+                    />
+                  ) : (
+                    <div className="mt-3 rounded-xl w-full h-56 bg-zinc-800 flex items-center justify-center text-zinc-500">
+                      Sem imagem
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
         )}
 
         {tab === "importar" && (
           <>
             {!mangaIdToUse ? (
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 text-zinc-300">
-                Selecione ou cole um MangaId primeiro.
+                Selecione um mangá primeiro.
               </div>
             ) : (
-              <div className="grid lg:grid-cols-3 gap-6">
-                <ImportChapterLinks mangaId={mangaIdToUse} />
-                <ImportMangaFull mangaId={mangaIdToUse} />
-                <ImportAutoFromUrl mangaId={mangaIdToUse} />
-              </div>
+              <section className="grid gap-6 xl:grid-cols-3">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
+                    📄 Importar 1 capítulo
+                  </h2>
+                  <ImportChapterLinks mangaId={mangaIdToUse} />
+                </div>
+
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
+                    📚 Importar tudo
+                  </h2>
+                  <ImportMangaFull mangaId={mangaIdToUse} />
+                </div>
+
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
+                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
+                    ⚡ Importação automática
+                  </h2>
+                  <ImportAutoFromUrl mangaId={mangaIdToUse} />
+                </div>
+              </section>
             )}
           </>
         )}

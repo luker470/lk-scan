@@ -32,7 +32,9 @@ function isAllowedChapterUrl(urlStr: string) {
 
 function extractImageUrlsFromHtml(html: string) {
   const matches =
-    html.match(/https?:\/\/[^\s"'<>]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]+)?/gi) || [];
+    html.match(
+      /https?:\/\/[^\s"'<>]+?\.(?:jpe?g|png|webp|gif)(?:\?[^\s"'<>]+)?/gi
+    ) || [];
 
   const filtered = matches.filter((u) =>
     u.includes("/wp-content/uploads/WP-manga/data/")
@@ -56,8 +58,16 @@ function extractImageUrlsFromHtml(html: string) {
   return unique;
 }
 
+type ExistingChapterData = {
+  views?: number;
+  weekViews?: number;
+  createdAt?: unknown;
+};
+
 export async function POST(req: Request) {
-  if (!isAuthed(req)) return new NextResponse("Unauthorized", { status: 401 });
+  if (!isAuthed(req)) {
+    return new NextResponse("Unauthorized", { status: 401 });
+  }
 
   const body = await req.json().catch(() => null);
   const mangaId = body?.mangaId as string | undefined;
@@ -65,13 +75,18 @@ export async function POST(req: Request) {
   const chapterUrl = String(body?.chapterUrl || "");
   const overwriteExisting = Boolean(body?.overwriteExisting);
 
-  if (!mangaId) return new NextResponse("Missing mangaId", { status: 400 });
+  if (!mangaId) {
+    return new NextResponse("Missing mangaId", { status: 400 });
+  }
+
   if (!chapterNumber || chapterNumber < 1) {
     return new NextResponse("Invalid chapterNumber", { status: 400 });
   }
+
   if (!chapterUrl || !chapterUrl.startsWith("http")) {
     return new NextResponse("Invalid chapterUrl", { status: 400 });
   }
+
   if (!isAllowedChapterUrl(chapterUrl)) {
     return new NextResponse("Chapter host not allowed", { status: 403 });
   }
@@ -81,11 +96,21 @@ export async function POST(req: Request) {
 
   try {
     const db = getAdminDb();
+
+    if (!db) {
+      return new NextResponse("Firebase Admin não configurado.", {
+        status: 500,
+      });
+    }
+
     const chapterId = pad3(chapterNumber);
     const mangaRef = db.collection("mangas").doc(mangaId);
     const chapterRef = mangaRef.collection("chapters").doc(chapterId);
 
     const existingChapterSnap = await chapterRef.get();
+    const existingData = existingChapterSnap.exists
+      ? (existingChapterSnap.data() as ExistingChapterData)
+      : null;
 
     if (existingChapterSnap.exists && !overwriteExisting) {
       return new NextResponse(
@@ -135,7 +160,11 @@ export async function POST(req: Request) {
       );
     }
 
-    const pages = urls.map((url, i) => ({ index: i + 1, url }));
+    const pages = urls.map((url, i) => ({
+      index: i + 1,
+      url,
+    }));
+
     const now = new Date();
 
     await chapterRef.set(
@@ -145,11 +174,12 @@ export async function POST(req: Request) {
         pagesCount: pages.length,
         pages,
         sourceUrl: chapterUrl,
-        views: existingChapterSnap.data()?.views ?? 0,
-        weekViews: existingChapterSnap.data()?.weekViews ?? 0,
-        createdAt: existingChapterSnap.exists
-          ? existingChapterSnap.data()?.createdAt || now
-          : now,
+        views: existingData?.views ?? 0,
+        weekViews: existingData?.weekViews ?? 0,
+        createdAt:
+          existingChapterSnap.exists && existingData?.createdAt
+            ? existingData.createdAt
+            : now,
         updatedAt: now,
       },
       { merge: true }
@@ -161,9 +191,11 @@ export async function POST(req: Request) {
     let lastChapterNumber = 0;
 
     chaptersSnap.forEach((docSnap) => {
-      const data = docSnap.data() as any;
+      const data = docSnap.data() as { number?: number | string };
       const n = Number(data.number || 0);
-      if (n > lastChapterNumber) lastChapterNumber = n;
+      if (n > lastChapterNumber) {
+        lastChapterNumber = n;
+      }
     });
 
     await mangaRef.set(
@@ -178,9 +210,12 @@ export async function POST(req: Request) {
     return new NextResponse(
       `Importado com sucesso: ${chapterId} (${pages.length} páginas). chaptersCount=${chaptersCount}, lastChapterNumber=${lastChapterNumber}`
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
     console.error(e);
-    return new NextResponse(e?.message || "Import failed", { status: 500 });
+
+    const message = e instanceof Error ? e.message : "Import failed";
+
+    return new NextResponse(message, { status: 500 });
   } finally {
     clearTimeout(t);
   }

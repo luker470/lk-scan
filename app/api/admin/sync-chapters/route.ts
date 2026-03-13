@@ -3,7 +3,7 @@ import { getAdminBucket, getAdminDb } from "@/lib/firebaseAdmin";
 import admin from "firebase-admin";
 
 export const runtime = "nodejs";
-export const dynamic = "force-dynamic"; // 🔥 evita cache no Vercel
+export const dynamic = "force-dynamic";
 
 function chapterToNumber(ch: string) {
   const n = parseInt(ch, 10);
@@ -16,7 +16,6 @@ function isImage(name: string) {
 
 export async function POST(req: Request) {
   try {
-    // 🔒 proteção (agora não quebra se não existir ENV)
     const token = req.headers.get("x-admin-token") || "";
     const expected = process.env.ADMIN_SYNC_TOKEN;
 
@@ -26,6 +25,18 @@ export async function POST(req: Request) {
 
     const db = getAdminDb();
     const bucket = getAdminBucket();
+
+    if (!db) {
+      return new NextResponse("Firebase Admin não configurado.", {
+        status: 500,
+      });
+    }
+
+    if (!bucket) {
+      return new NextResponse("Firebase Storage Admin não configurado.", {
+        status: 500,
+      });
+    }
 
     const mangasSnap = await db.collection("mangas").get();
 
@@ -109,10 +120,8 @@ export async function POST(req: Request) {
       mangasProcessed,
       chaptersUpdated,
     });
-
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("SYNC ERROR:", error);
-
     return new NextResponse("Internal Server Error", { status: 500 });
   }
 }

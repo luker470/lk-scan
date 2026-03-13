@@ -6,11 +6,21 @@ type PageProps = {
   params: Promise<{ id: string }>;
 };
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: PageProps): Promise<Metadata> {
   const { id } = await params;
 
   try {
     const db = getAdminDb();
+
+    if (!db) {
+      return {
+        title: "Mangá",
+        description: "Leia mangás online no LK-Scan.",
+      };
+    }
+
     const snap = await db.collection("mangas").doc(id).get();
 
     if (!snap.exists) {
@@ -20,7 +30,12 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       };
     }
 
-    const manga = snap.data() as any;
+    const manga = snap.data() as {
+      title?: string;
+      description?: string;
+      cover?: string;
+    };
+
     const title = manga.title || "Mangá";
     const description =
       manga.description || `Leia ${title} online no LK-Scan.`;

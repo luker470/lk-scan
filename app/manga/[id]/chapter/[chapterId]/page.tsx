@@ -9,11 +9,20 @@ type PageProps = {
   }>;
 };
 
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+export async function generateMetadata({
+  params,
+}: PageProps): Promise<Metadata> {
   const { id, chapterId } = await params;
 
   try {
     const db = getAdminDb();
+
+    if (!db) {
+      return {
+        title: "Capítulo",
+        description: "Leia capítulos online no LK-Scan.",
+      };
+    }
 
     const mangaSnap = await db.collection("mangas").doc(id).get();
     const chapterSnap = await db
@@ -30,8 +39,15 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
       };
     }
 
-    const manga = mangaSnap.data() as any;
-    const chapter = chapterSnap.data() as any;
+    const manga = mangaSnap.data() as {
+      title?: string;
+      cover?: string;
+    };
+
+    const chapter = chapterSnap.data() as {
+      title?: string;
+      number?: number | string;
+    };
 
     const mangaTitle = manga.title || "Mangá";
     const chapterTitle =

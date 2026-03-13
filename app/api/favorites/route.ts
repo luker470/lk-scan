@@ -9,11 +9,27 @@ export async function POST(req: Request) {
     const { uid, mangaId, title, cover, genre } = await req.json();
 
     if (!uid || !mangaId) {
-      return NextResponse.json({ error: "Missing uid/mangaId" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing uid/mangaId" },
+        { status: 400 }
+      );
     }
 
     const db = getAdminDb();
-    const favRef = db.collection("users").doc(uid).collection("favorites").doc(mangaId);
+
+    if (!db) {
+      return NextResponse.json(
+        { error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
+    const favRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("favorites")
+      .doc(mangaId);
+
     const snap = await favRef.get();
 
     if (snap.exists) {
@@ -34,7 +50,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ ok: true, favorited: true });
   } catch (e) {
-    return NextResponse.json({ error: "Failed", details: String(e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed", details: String(e) },
+      { status: 500 }
+    );
   }
 }
 
@@ -47,6 +66,14 @@ export async function GET(req: NextRequest) {
     }
 
     const db = getAdminDb();
+
+    if (!db) {
+      return NextResponse.json(
+        { error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
     const snap = await db
       .collection("users")
       .doc(uid)
@@ -61,6 +88,9 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ ok: true, items });
   } catch (e) {
-    return NextResponse.json({ error: "Failed", details: String(e) }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed", details: String(e) },
+      { status: 500 }
+    );
   }
 }

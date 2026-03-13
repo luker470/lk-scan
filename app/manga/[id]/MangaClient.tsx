@@ -6,43 +6,81 @@ import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/fires
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import FavoriteButton from "@/components/FavoriteButton";
+import { useAuth } from "@/context/AuthContext";
 
 type Chapter = {
   id: string;
   number: number;
   title?: string;
   pagesCount?: number;
+  views?: number;
+  updatedAt?: any;
 };
 
 type Manga = {
   id: string;
   title: string;
   cover?: string;
+  banner?: string;
   genre?: string;
   description?: string;
+  status?: string;
+  author?: string;
+  artist?: string;
   views?: number;
+  weekViews?: number;
   chaptersCount?: number;
   lastChapterNumber?: number;
   updatedAt?: any;
+  createdAt?: any;
 };
 
+type HistoryItem = {
+  id: string;
+  mangaId: string;
+  chapterId: string;
+  mangaTitle: string;
+  chapterTitle?: string;
+  updatedAt?: any;
+};
+
+function formatDate(v: any) {
+  const seconds = v?.seconds;
+  if (!seconds) return "Sem data";
+  return new Date(seconds * 1000).toLocaleString("pt-BR");
+}
+
+function pad3(n: number) {
+  return String(n).padStart(3, "0");
+}
+
+function formatStatus(status?: string) {
+  if (!status) return "—";
+
+  const s = status.toLowerCase();
+
+  if (s === "ongoing") return "Em andamento";
+  if (s === "completed") return "Finalizado";
+  if (s === "hiatus") return "Hiato";
+  if (s === "cancelled") return "Cancelado";
+
+  return status;
+}
+
 export default function MangaClient({ id }: { id: string }) {
+  const { user } = useAuth();
+
   const [manga, setManga] = useState<Manga | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sortDesc, setSortDesc] = useState(true);
+  const [lastReadChapterId, setLastReadChapterId] = useState<string | null>(null);
 
   useEffect(() => {
     async function run() {
       setLoading(true);
 
       try {
-        if (!db) {
-          console.error("Firestore não inicializado");
-          setManga(null);
-          setChapters([]);
-          return;
-        }
-
         const ref = doc(db, "mangas", id);
         const snap = await getDoc(ref);
 
@@ -66,12 +104,12 @@ export default function MangaClient({ id }: { id: string }) {
 
         const chaptersSnap = await getDocs(chaptersQ);
 
-        setChapters(
-          chaptersSnap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as any),
-          }))
-        );
+        const list = chaptersSnap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        })) as Chapter[];
+
+        setChapters(list);
       } catch (e) {
         console.error("Erro ao carregar mangá:", e);
       } finally {
@@ -82,10 +120,53 @@ export default function MangaClient({ id }: { id: string }) {
     if (id) run();
   }, [id]);
 
-  const latestChapterId = useMemo(() => {
+  useEffect(() => {
+    async function loadHistory() {
+      if (!user?.uid || !id) {
+        setLastReadChapterId(null);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/history?uid=${encodeURIComponent(user.uid)}`);
+        const data = await res.json();
+
+        const items = (data?.items || []) as HistoryItem[];
+        const match = items.find((item) => item.mangaId === id);
+
+        setLastReadChapterId(match?.chapterId || null);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    loadHistory();
+  }, [user?.uid, id]);
+
+  const latestChapter = useMemo(() => {
     if (!chapters.length) return null;
-    return chapters[0].id;
+    return [...chapters].sort((a, b) => Number(b.number || 0) - Number(a.number || 0))[0];
   }, [chapters]);
+
+  const firstChapter = useMemo(() => {
+    if (!chapters.length) return null;
+    return [...chapters].sort((a, b) => Number(a.number || 0) - Number(b.number || 0))[0];
+  }, [chapters]);
+
+  const displayedChapters = useMemo(() => {
+    const list = [...chapters];
+    list.sort((a, b) => {
+      const an = Number(a.number || 0);
+      const bn = Number(b.number || 0);
+      return sortDesc ? bn - an : an - bn;
+    });
+    return list;
+  }, [chapters, sortDesc]);
+
+  const continueChapter = useMemo(() => {
+    if (!lastReadChapterId) return null;
+    return chapters.find((c) => c.id === lastReadChapterId) || null;
+  }, [lastReadChapterId, chapters]);
 
   if (loading) {
     return (
@@ -116,113 +197,286 @@ export default function MangaClient({ id }: { id: string }) {
     typeof manga.chaptersCount === "number" ? manga.chaptersCount : chapters.length;
 
   const coverSrc = proxifyImage(manga.cover);
+  const bannerSrc = proxifyImage(manga.banner || manga.cover);
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white p-6">
-      <div className="max-w-4xl mx-auto space-y-6">
-        <div className="flex items-center gap-3">
-          <img
-            src="/logo.png"
-            alt="LK"
-            className="h-10 w-auto drop-shadow-[0_0_12px_#00ffff]"
-          />
-          <span className="text-lg font-bold text-cyan-400 drop-shadow-[0_0_10px_#00ffff]">
-            LK-Scan
-          </span>
-        </div>
+    <main className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white">
+      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+        <section className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/60">
+          <div className="relative h-56 md:h-80 overflow-hidden">
+            {bannerSrc ? (
+              <>
+                <img
+                  src={bannerSrc}
+                  alt={manga.title}
+                  className="w-full h-full object-cover opacity-25 blur-[2px] scale-105"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-black/30" />
+              </>
+            ) : (
+              <div className="w-full h-full bg-zinc-900" />
+            )}
+          </div>
 
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
-          {coverSrc ? (
-            <img
-              src={coverSrc}
-              alt={manga.title}
-              className="w-full max-h-96 object-cover"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-full h-72 flex items-center justify-center bg-zinc-800 text-zinc-400">
-              Sem capa
+          <div className="relative px-5 pb-5 md:px-8 md:pb-8">
+            <div className="-mt-20 md:-mt-28 flex flex-col lg:flex-row gap-6">
+              <div className="shrink-0">
+                {coverSrc ? (
+                  <img
+                    src={coverSrc}
+                    alt={manga.title}
+                    className="w-40 md:w-52 h-56 md:h-72 object-cover rounded-2xl border border-zinc-800 shadow-[0_0_35px_rgba(0,255,255,0.08)]"
+                  />
+                ) : (
+                  <div className="w-40 md:w-52 h-56 md:h-72 rounded-2xl border border-zinc-800 bg-zinc-800 flex items-center justify-center text-zinc-400">
+                    Sem capa
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 space-y-5">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-semibold">
+                      LK-Scan
+                    </span>
+
+                    {latestChapter?.number ? (
+                      <span className="px-3 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-semibold">
+                        Último cap. {pad3(latestChapter.number)}
+                      </span>
+                    ) : null}
+
+                    {!!manga.status && (
+                      <span className="px-3 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-semibold">
+                        {formatStatus(manga.status)}
+                      </span>
+                    )}
+                  </div>
+
+                  <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight">
+                    {manga.title}
+                  </h1>
+
+                  <div className="flex flex-wrap gap-3 text-sm text-zinc-400">
+                    <span>Gênero: {manga.genre || "—"}</span>
+                    <span>Views: {(manga.views ?? 0).toLocaleString()}</span>
+                    <span>Capítulos: {chaptersCount}</span>
+                    <span>Semana: {(manga.weekViews ?? 0).toLocaleString()}</span>
+                  </div>
+
+                  {(manga.author || manga.artist) && (
+                    <div className="flex flex-wrap gap-3 text-sm text-zinc-400">
+                      {manga.author && <span>Autor: {manga.author}</span>}
+                      {manga.artist && <span>Artista: {manga.artist}</span>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-zinc-800 bg-black/30 p-4 text-zinc-300 leading-relaxed">
+                  {manga.description?.trim()
+                    ? manga.description
+                    : "Sem descrição ainda. Adicione uma descrição no painel admin para deixar a página mais completa."}
+                </div>
+
+                <div className="flex flex-col md:flex-row gap-3">
+                  {continueChapter ? (
+                    <Link
+                      href={`/manga/${manga.id}/chapter/${continueChapter.id}`}
+                      className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition text-center"
+                    >
+                      ▶ Continuar leitura
+                    </Link>
+                  ) : latestChapter ? (
+                    <Link
+                      href={`/manga/${manga.id}/chapter/${latestChapter.id}`}
+                      className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition text-center"
+                    >
+                      ▶ Ler último capítulo
+                    </Link>
+                  ) : (
+                    <div className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-300 text-center">
+                      Nenhum capítulo ainda.
+                    </div>
+                  )}
+
+                  {firstChapter ? (
+                    <Link
+                      href={`/manga/${manga.id}/chapter/${firstChapter.id}`}
+                      className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition text-center"
+                    >
+                      📖 Ler do início
+                    </Link>
+                  ) : null}
+
+                  <FavoriteButton
+                    mangaId={manga.id}
+                    title={manga.title}
+                    cover={manga.cover}
+                    genre={manga.genre}
+                  />
+
+                  <Link
+                    href="/"
+                    className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition text-center"
+                  >
+                    ← Voltar
+                  </Link>
+                </div>
+              </div>
             </div>
-          )}
+          </div>
+        </section>
 
-          <div className="p-6 space-y-4">
-            <div className="space-y-1">
-              <h1 className="text-3xl font-bold">{manga.title}</h1>
-              <p className="text-zinc-300">Gênero: {manga.genre || "—"}</p>
-
-              {!!manga.description && (
-                <p className="text-sm text-zinc-300 leading-relaxed pt-2">
-                  {manga.description}
+        <section className="grid gap-6 lg:grid-cols-[1fr_320px]">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold text-cyan-400">📚 Lista de capítulos</h2>
+                <p className="text-sm text-zinc-400 mt-1">
+                  Total: {chaptersCount} capítulo{chaptersCount === 1 ? "" : "s"}
                 </p>
-              )}
+              </div>
 
-              <p className="text-xs text-zinc-400">
-                Capítulos: <b className="text-zinc-200">{chaptersCount}</b> • Views:{" "}
-                <b className="text-zinc-200">{(manga.views ?? 0).toLocaleString()}</b>
-              </p>
+              <button
+                onClick={() => setSortDesc((v) => !v)}
+                className="px-4 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition text-sm font-semibold"
+              >
+                Ordem: {sortDesc ? "Mais novos" : "Mais antigos"}
+              </button>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-3">
-              {latestChapterId ? (
-                <Link
-                  href={`/manga/${manga.id}/chapter/${latestChapterId}`}
-                  className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-600 transition text-center shadow-[0_0_12px_#00ffff]"
-                >
-                  ▶︎ Ler último capítulo
-                </Link>
-              ) : (
-                <div className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-300 text-center">
+            <div className="space-y-3">
+              {displayedChapters.length === 0 && (
+                <div className="rounded-xl border border-zinc-800 bg-black/30 p-4 text-zinc-400">
                   Nenhum capítulo ainda.
                 </div>
               )}
 
-              <FavoriteButton
-                mangaId={manga.id}
-                title={manga.title}
-                cover={manga.cover}
-                genre={manga.genre}
-              />
+              {displayedChapters.map((c) => {
+                const isContinue = continueChapter?.id === c.id;
 
-              <Link
-                href="/"
-                className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition text-center"
-              >
-                ← Voltar
-              </Link>
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
-              <div className="mb-2 font-semibold">Capítulos</div>
-
-              <div className="space-y-2">
-                {chapters.length === 0 && (
-                  <div className="opacity-70">Nenhum capítulo ainda.</div>
-                )}
-
-                {chapters.map((c) => (
+                return (
                   <Link
                     key={c.id}
                     href={`/manga/${manga.id}/chapter/${c.id}`}
-                    className="flex items-center justify-between rounded-xl bg-white/5 p-3 hover:bg-white/10 transition"
+                    className={`flex items-center justify-between gap-3 rounded-2xl border p-4 transition ${
+                      isContinue
+                        ? "border-cyan-500/40 bg-cyan-500/5 hover:border-cyan-400"
+                        : "border-zinc-800 bg-black/20 hover:border-cyan-400"
+                    }`}
                   >
-                    <div>
-                      <div className="font-semibold">
-                        {c.title || `Capítulo ${String(c.number).padStart(3, "0")}`}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="font-semibold">
+                          {c.title || `Capítulo ${pad3(c.number || 0)}`}
+                        </div>
+
+                        {isContinue && (
+                          <span className="px-2 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px] font-semibold">
+                            Continuar
+                          </span>
+                        )}
                       </div>
-                      <div className="text-xs opacity-70">{c.pagesCount || 0} páginas</div>
+
+                      <div className="text-xs text-zinc-500 mt-1 flex flex-wrap gap-3">
+                        <span>{c.pagesCount || 0} páginas</span>
+                        <span>{(c.views ?? 0).toLocaleString()} views</span>
+                        <span>{formatDate(c.updatedAt)}</span>
+                      </div>
                     </div>
-                    <div className="text-sm opacity-80">Ler</div>
+
+                    <div className="shrink-0 text-sm text-zinc-300">
+                      Ler →
+                    </div>
                   </Link>
-                ))}
+                );
+              })}
+            </div>
+          </div>
+
+          <aside className="space-y-6">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+              <h3 className="text-lg font-bold text-cyan-400 mb-4">ℹ Informações</h3>
+
+              <div className="space-y-3 text-sm">
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Título</div>
+                  <div className="text-zinc-200 font-semibold">{manga.title}</div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Gênero</div>
+                  <div className="text-zinc-200 font-semibold">{manga.genre || "—"}</div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Status</div>
+                  <div className="text-zinc-200 font-semibold">
+                    {formatStatus(manga.status)}
+                  </div>
+                </div>
+
+                {manga.author && (
+                  <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                    <div className="text-zinc-500">Autor</div>
+                    <div className="text-zinc-200 font-semibold">{manga.author}</div>
+                  </div>
+                )}
+
+                {manga.artist && (
+                  <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                    <div className="text-zinc-500">Artista</div>
+                    <div className="text-zinc-200 font-semibold">{manga.artist}</div>
+                  </div>
+                )}
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Total de capítulos</div>
+                  <div className="text-zinc-200 font-semibold">{chaptersCount}</div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Views totais</div>
+                  <div className="text-zinc-200 font-semibold">
+                    {(manga.views ?? 0).toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Última atualização</div>
+                  <div className="text-zinc-200 font-semibold">
+                    {formatDate(manga.updatedAt || manga.createdAt)}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="text-[11px] text-zinc-500">
-              Dica: se o “Ler último capítulo” estiver errado, verifique se os capítulos estão
-              salvando o campo <b>number</b>.
-            </div>
-          </div>
-        </div>
+            {latestChapter && (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+                <h3 className="text-lg font-bold text-cyan-400 mb-4">⚡ Acesso rápido</h3>
+
+                <div className="space-y-3">
+                  <Link
+                    href={`/manga/${manga.id}/chapter/${latestChapter.id}`}
+                    className="block w-full rounded-xl bg-cyan-500 p-3 text-center font-bold text-black hover:bg-cyan-400 transition"
+                  >
+                    Ler último capítulo
+                  </Link>
+
+                  {firstChapter && (
+                    <Link
+                      href={`/manga/${manga.id}/chapter/${firstChapter.id}`}
+                      className="block w-full rounded-xl border border-zinc-700 p-3 text-center text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                    >
+                      Ler do início
+                    </Link>
+                  )}
+                </div>
+              </div>
+            )}
+          </aside>
+        </section>
       </div>
     </main>
   );
