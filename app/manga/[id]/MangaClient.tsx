@@ -2,7 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import FavoriteButton from "@/components/FavoriteButton";
@@ -15,6 +23,7 @@ type Chapter = {
   pagesCount?: number;
   views?: number;
   updatedAt?: any;
+  createdAt?: any;
 };
 
 type Manga = {
@@ -29,6 +38,8 @@ type Manga = {
   artist?: string;
   views?: number;
   weekViews?: number;
+  dayViews?: number;
+  monthViews?: number;
   chaptersCount?: number;
   lastChapterNumber?: number;
   updatedAt?: any;
@@ -58,7 +69,6 @@ function formatStatus(status?: string) {
   if (!status) return "—";
 
   const s = status.toLowerCase();
-
   if (s === "ongoing") return "Em andamento";
   if (s === "completed") return "Finalizado";
   if (s === "hiatus") return "Hiato";
@@ -67,11 +77,19 @@ function formatStatus(status?: string) {
   return status;
 }
 
+function splitGenres(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 export default function MangaClient({ id }: { id: string }) {
   const { user } = useAuth();
 
   const [manga, setManga] = useState<Manga | null>(null);
   const [chapters, setChapters] = useState<Chapter[]>([]);
+  const [related, setRelated] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const [sortDesc, setSortDesc] = useState(true);
   const [lastReadChapterId, setLastReadChapterId] = useState<string | null>(null);
@@ -81,21 +99,29 @@ export default function MangaClient({ id }: { id: string }) {
       setLoading(true);
 
       try {
+        if (!db) {
+          setManga(null);
+          setChapters([]);
+          setRelated([]);
+          return;
+        }
+
         const ref = doc(db, "mangas", id);
         const snap = await getDoc(ref);
 
         if (!snap.exists()) {
           setManga(null);
           setChapters([]);
+          setRelated([]);
           return;
         }
 
-        const data = {
+        const mangaData = {
           id: snap.id,
           ...(snap.data() as Omit<Manga, "id">),
         };
 
-        setManga(data);
+        setManga(mangaData);
 
         const chaptersQ = query(
           collection(db, "mangas", id, "chapters"),
@@ -104,14 +130,56 @@ export default function MangaClient({ id }: { id: string }) {
 
         const chaptersSnap = await getDocs(chaptersQ);
 
-        const list = chaptersSnap.docs.map((d) => ({
+        const chapterList = chaptersSnap.docs.map((d) => ({
           id: d.id,
-          ...(d.data() as any),
+          ...(d.data() as Omit<Chapter, "id">),
         })) as Chapter[];
 
-        setChapters(list);
+        setChapters(chapterList);
+
+        if (mangaData.genre) {
+          try {
+            const relatedSnap = await getDocs(
+              query(collection(db, "mangas"), limit(40))
+            );
+
+            const currentGenres = splitGenres(mangaData.genre);
+
+            const relatedList = relatedSnap.docs
+              .map((d) => ({
+                id: d.id,
+                ...(d.data() as Omit<Manga, "id">),
+              }))
+              .filter((item) => item.id !== id)
+              .map((item) => {
+                const itemGenres = splitGenres(item.genre);
+                const score = itemGenres.reduce((sum, genre) => {
+                  return sum + (currentGenres.includes(genre) ? 1 : 0);
+                }, 0);
+
+                return { ...item, _score: score };
+              })
+              .filter((item) => item._score > 0)
+              .sort((a, b) => {
+                if (b._score !== a._score) return b._score - a._score;
+                return Number(b.views || 0) - Number(a.views || 0);
+              })
+              .slice(0, 6)
+              .map(({ _score, ...rest }) => rest);
+
+            setRelated(relatedList);
+          } catch (e) {
+            console.error("Erro ao carregar relacionados:", e);
+            setRelated([]);
+          }
+        } else {
+          setRelated([]);
+        }
       } catch (e) {
         console.error("Erro ao carregar mangá:", e);
+        setManga(null);
+        setChapters([]);
+        setRelated([]);
       } finally {
         setLoading(false);
       }
@@ -136,7 +204,8 @@ export default function MangaClient({ id }: { id: string }) {
 
         setLastReadChapterId(match?.chapterId || null);
       } catch (e) {
-        console.error(e);
+        console.error("Erro ao carregar histórico:", e);
+        setLastReadChapterId(null);
       }
     }
 
@@ -273,7 +342,7 @@ export default function MangaClient({ id }: { id: string }) {
                   )}
                 </div>
 
-                <div className="rounded-2xl border border-zinc-800 bg-black/30 p-4 text-zinc-300 leading-relaxed">
+                <div className="rounded-2xl border border-zinc-800 bg-black/30 p-4 text-zinc-300 leading-relaxed whitespace-pre-wrap">
                   {manga.description?.trim()
                     ? manga.description
                     : "Sem descrição ainda. Adicione uma descrição no painel admin para deixar a página mais completa."}
@@ -382,13 +451,11 @@ export default function MangaClient({ id }: { id: string }) {
                       <div className="text-xs text-zinc-500 mt-1 flex flex-wrap gap-3">
                         <span>{c.pagesCount || 0} páginas</span>
                         <span>{(c.views ?? 0).toLocaleString()} views</span>
-                        <span>{formatDate(c.updatedAt)}</span>
+                        <span>{formatDate(c.updatedAt || c.createdAt)}</span>
                       </div>
                     </div>
 
-                    <div className="shrink-0 text-sm text-zinc-300">
-                      Ler →
-                    </div>
+                    <div className="shrink-0 text-sm text-zinc-300">Ler →</div>
                   </Link>
                 );
               })}
@@ -472,6 +539,43 @@ export default function MangaClient({ id }: { id: string }) {
                       Ler do início
                     </Link>
                   )}
+                </div>
+              </div>
+            )}
+
+            {related.length > 0 && (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-5">
+                <h3 className="text-lg font-bold text-cyan-400 mb-4">🔥 Relacionados</h3>
+
+                <div className="space-y-3">
+                  {related.map((item) => {
+                    const img = proxifyImage(item.cover);
+
+                    return (
+                      <Link
+                        key={item.id}
+                        href={`/manga/${item.id}`}
+                        className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-black/20 p-3 hover:border-cyan-400 transition"
+                      >
+                        {img ? (
+                          <img
+                            src={img}
+                            alt={item.title}
+                            className="h-16 w-12 rounded object-cover shrink-0"
+                          />
+                        ) : (
+                          <div className="h-16 w-12 rounded bg-zinc-800 shrink-0" />
+                        )}
+
+                        <div className="min-w-0">
+                          <div className="font-semibold line-clamp-1">{item.title}</div>
+                          <div className="text-xs text-zinc-500 line-clamp-1">
+                            {item.genre || "Sem gênero"}
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
                 </div>
               </div>
             )}

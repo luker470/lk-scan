@@ -92,7 +92,7 @@ export async function GET(req: NextRequest) {
     const mangasSnap = await db
       .collection("mangas")
       .where("autoSync", "==", true)
-      .limit(5)
+      .limit(10)
       .get();
 
     let mangasProcessed = 0;
@@ -210,6 +210,9 @@ export async function GET(req: NextRequest) {
             .collection("chapters")
             .doc(chapterId);
 
+          const previousSnap = await chapterRef.get();
+          const previousData = previousSnap.exists ? previousSnap.data() : null;
+
           await chapterRef.set(
             {
               number: chapterNumber,
@@ -217,11 +220,11 @@ export async function GET(req: NextRequest) {
               pagesCount: pages.length,
               pages,
               sourceUrl: chapter.url,
-              views: 0,
-              dayViews: 0,
-              weekViews: 0,
-              monthViews: 0,
-              createdAt: new Date(),
+              views: previousData?.views ?? 0,
+              dayViews: previousData?.dayViews ?? 0,
+              weekViews: previousData?.weekViews ?? 0,
+              monthViews: previousData?.monthViews ?? 0,
+              createdAt: previousData?.createdAt || new Date(),
               updatedAt: new Date(),
             },
             { merge: true }

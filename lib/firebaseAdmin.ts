@@ -1,42 +1,51 @@
-import { cert, getApp, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import {
+  cert,
+  getApp,
+  getApps,
+  initializeApp,
+  applicationDefault,
+  type App,
+} from "firebase-admin/app";
+
+import { getFirestore, type Firestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 
 let adminApp: App | null = null;
+let adminDb: Firestore | null = null;
 
-function normalizePrivateKey(raw?: string | null) {
-  if (!raw) return null;
+function normalizeEnv(raw?: string | null) {
+  if (!raw) return "";
 
-  let key = raw.trim();
+  let value = raw.trim();
 
   if (
-    (key.startsWith('"') && key.endsWith('"')) ||
-    (key.startsWith("'") && key.endsWith("'"))
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
   ) {
-    key = key.slice(1, -1);
+    value = value.slice(1, -1);
   }
 
-  key = key.replace(/\\n/g, "\n");
-
-  return key;
+  return value.trim();
 }
 
-function canInitAdmin() {
-  return Boolean(
-    process.env.FIREBASE_ADMIN_PROJECT_ID &&
-      process.env.FIREBASE_ADMIN_CLIENT_EMAIL &&
-      process.env.FIREBASE_ADMIN_PRIVATE_KEY &&
-      process.env.FIREBASE_ADMIN_STORAGE_BUCKET
-  );
+function normalizePrivateKey(raw?: string | null) {
+  const key = normalizeEnv(raw);
+  if (!key) return "";
+
+  return key.replace(/\\n/g, "\n");
+}
+
+function getConfig() {
+  return {
+    projectId: normalizeEnv(process.env.FIREBASE_ADMIN_PROJECT_ID),
+    clientEmail: normalizeEnv(process.env.FIREBASE_ADMIN_CLIENT_EMAIL),
+    privateKey: normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY),
+    storageBucket: normalizeEnv(process.env.FIREBASE_ADMIN_STORAGE_BUCKET),
+  };
 }
 
 function initAdmin() {
   if (adminApp) return adminApp;
-
-  if (!canInitAdmin()) {
-    console.warn("Firebase Admin não iniciado: variáveis ausentes.");
-    return null;
-  }
 
   try {
     if (getApps().length > 0) {
@@ -44,25 +53,41 @@ function initAdmin() {
       return adminApp;
     }
 
-    const privateKey = normalizePrivateKey(process.env.FIREBASE_ADMIN_PRIVATE_KEY);
+    const { projectId, clientEmail, privateKey, storageBucket } = getConfig();
 
-    if (!privateKey) {
-      console.warn("Firebase Admin não iniciado: private key ausente.");
-      return null;
+    console.log("ADMIN DEBUG:", {
+      projectId,
+      clientEmail,
+      hasPrivateKey: !!privateKey,
+      privateKeyLength: privateKey?.length,
+      bucket: storageBucket,
+    });
+
+    if (projectId && clientEmail && privateKey) {
+      console.log("Inicializando Firebase Admin com cert()");
+
+      adminApp = initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+        ...(storageBucket ? { storageBucket } : {}),
+      });
+    } else {
+      console.log("Usando applicationDefault()");
+
+      adminApp = initializeApp({
+        credential: applicationDefault(),
+        ...(storageBucket ? { storageBucket } : {}),
+      });
     }
 
-    adminApp = initializeApp({
-      credential: cert({
-        projectId: process.env.FIREBASE_ADMIN_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_ADMIN_CLIENT_EMAIL,
-        privateKey,
-      }),
-      storageBucket: process.env.FIREBASE_ADMIN_STORAGE_BUCKET,
-    });
+    console.log("Firebase Admin iniciado.");
 
     return adminApp;
   } catch (error) {
-    console.error("Erro ao inicializar Firebase Admin:", error);
+    console.error("Erro ao iniciar Firebase Admin:", error);
     return null;
   }
 }
@@ -72,17 +97,21 @@ export function getAdminApp() {
 }
 
 export function getAdminDb() {
+  if (adminDb) return adminDb;
+
   const app = getAdminApp();
   if (!app) return null;
-  return getFirestore(app);
+
+  adminDb = getFirestore(app);
+  return adminDb;
 }
 
 export function getAdminBucket() {
   const app = getAdminApp();
   if (!app) return null;
 
-  const bucketName = process.env.FIREBASE_ADMIN_STORAGE_BUCKET;
-  if (!bucketName) return null;
+  const { storageBucket } = getConfig();
+  if (!storageBucket) return null;
 
-  return getStorage(app).bucket(bucketName);
+  return getStorage(app).bucket(storageBucket);
 }

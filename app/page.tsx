@@ -77,6 +77,13 @@ function formatStatus(status?: string) {
   return status;
 }
 
+function splitGenres(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 function RankingSidebar({
   rankingTab,
   onChangeTab,
@@ -298,6 +305,11 @@ export default function Home() {
 
   useEffect(() => {
     async function fetchMangas() {
+      if (!db) {
+        setMangas([]);
+        return;
+      }
+
       const q = query(
         collection(db, "mangas"),
         orderBy("updatedAt", "desc"),
@@ -315,6 +327,11 @@ export default function Home() {
 
     async function fetchReaders() {
       try {
+        if (!db) {
+          setReaders([]);
+          return;
+        }
+
         const snap = await getDocs(query(collection(db, "users"), limit(50)));
         const data: ReaderRankItem[] = snap.docs.map((d) => ({
           id: d.id,
@@ -351,7 +368,9 @@ export default function Home() {
 
   const genres = useMemo(() => {
     const set = new Set<string>();
-    mangas.forEach((m) => m.genre && set.add(m.genre));
+    mangas.forEach((m) => {
+      splitGenres(m.genre).forEach((g) => set.add(g));
+    });
     return ["Todos", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [mangas]);
 
@@ -362,7 +381,11 @@ export default function Home() {
 
     let list = mangas.filter((m) => {
       const okQuery = q ? normalized(m.title).includes(q) : true;
-      const okGenre = genreFilter === "Todos" ? true : m.genre === genreFilter;
+      const okGenre =
+        genreFilter === "Todos"
+          ? true
+          : splitGenres(m.genre).includes(genreFilter);
+
       return okQuery && okGenre;
     });
 
@@ -393,6 +416,10 @@ export default function Home() {
   }, [mangas]);
 
   const heroManga = useMemo(() => filtered[0] || mangas[0] || null, [filtered, mangas]);
+  const heroImage = heroManga
+    ? proxifyImage(heroManga.banner || heroManga.cover)
+    : null;
+
   const highlights = useMemo(() => filtered.slice(0, 10), [filtered]);
   const recentUpdated = useMemo(() => filtered.slice(0, 8), [filtered]);
 
@@ -401,10 +428,10 @@ export default function Home() {
       <div className="max-w-7xl mx-auto px-4 pb-12">
         <section className="mt-6 mb-8">
           <div className="relative overflow-hidden rounded-2xl border border-zinc-800 bg-gradient-to-b from-black via-zinc-900 to-black">
-            {heroManga?.banner || heroManga?.cover ? (
+            {heroImage ? (
               <img
-                src={proxifyImage(heroManga.banner || heroManga.cover) || ""}
-                alt={heroManga.title}
+                src={heroImage}
+                alt={heroManga?.title || "Destaque"}
                 className="absolute inset-0 h-full w-full object-cover opacity-20"
               />
             ) : null}
@@ -431,21 +458,23 @@ export default function Home() {
                           {heroManga.genre}
                         </span>
                       ) : null}
+
                       {heroManga.status ? (
                         <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-cyan-300">
                           {formatStatus(heroManga.status)}
                         </span>
                       ) : null}
+
                       <span className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
                         {(heroManga.views ?? 0).toLocaleString()} views
                       </span>
                     </div>
 
-                    {heroManga.description ? (
-                      <p className="mt-3 line-clamp-3 text-sm text-zinc-300">
-                        {heroManga.description}
-                      </p>
-                    ) : null}
+                    <p className="mt-3 line-clamp-3 text-sm text-zinc-300">
+                      {heroManga.description?.trim()
+                        ? heroManga.description
+                        : "Acompanhe esta obra em destaque no LK-Scan."}
+                    </p>
 
                     <div className="mt-4 flex flex-wrap gap-3">
                       <Link
@@ -454,6 +483,7 @@ export default function Home() {
                       >
                         Ver obra
                       </Link>
+
                       {heroManga.lastChapterNumber ? (
                         <Link
                           href={`/manga/${heroManga.id}/chapter/${String(

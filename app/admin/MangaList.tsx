@@ -12,25 +12,39 @@ import {
   DocumentData,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { proxifyImage } from "@/lib/imgProxy";
 
 type Manga = {
   id: string;
-  title: string;
-  genre: string;
-  cover: string;
+  title?: string;
+  genre?: string;
+  cover?: string;
+  banner?: string;
+  description?: string;
+  status?: string;
+  author?: string;
+  artist?: string;
+  sourceUrl?: string;
+  autoSync?: boolean;
   views?: number;
+  weekViews?: number;
+  dayViews?: number;
+  monthViews?: number;
   chaptersCount?: number;
   lastChapterNumber?: number;
   updatedAt?: any;
   createdAt?: any;
 };
 
-function proxify(url: string) {
-  return `/api/img?url=${encodeURIComponent(url)}`;
+function safeText(v: unknown) {
+  return typeof v === "string" ? v : "";
 }
 
-function safeText(v: any) {
-  return typeof v === "string" ? v : "";
+function splitGenres(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function pad3(n: number) {
@@ -43,7 +57,11 @@ function tsSeconds(v: any) {
 
 const PAGE_SIZE = 24;
 
-export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }) {
+export default function MangaList({
+  onSelect,
+}: {
+  onSelect: (m: Manga) => void;
+}) {
   const [list, setList] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -80,8 +98,14 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
       const colRef = collection(db, "mangas");
 
       let q1 = query(colRef, orderBy("updatedAt", "desc"), limit(PAGE_SIZE));
+
       if (!reset && lastDocRef.current) {
-        q1 = query(colRef, orderBy("updatedAt", "desc"), startAfter(lastDocRef.current), limit(PAGE_SIZE));
+        q1 = query(
+          colRef,
+          orderBy("updatedAt", "desc"),
+          startAfter(lastDocRef.current),
+          limit(PAGE_SIZE)
+        );
       }
 
       let snap;
@@ -89,14 +113,24 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
         snap = await getDocs(q1);
       } catch {
         let q2 = query(colRef, orderBy("createdAt", "desc"), limit(PAGE_SIZE));
+
         if (!reset && lastDocRef.current) {
-          q2 = query(colRef, orderBy("createdAt", "desc"), startAfter(lastDocRef.current), limit(PAGE_SIZE));
+          q2 = query(
+            colRef,
+            orderBy("createdAt", "desc"),
+            startAfter(lastDocRef.current),
+            limit(PAGE_SIZE)
+          );
         }
+
         snap = await getDocs(q2);
       }
 
       const docs = snap.docs;
-      const data = docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as Manga[];
+      const data = docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<Manga, "id">),
+      })) as Manga[];
 
       if (reset) setList(data);
       else setList((prev) => [...prev, ...data]);
@@ -115,17 +149,31 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
 
   useEffect(() => {
     fetchPage({ reset: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filtered = useMemo(() => {
     if (!debounced) return list;
 
     return list.filter((m) => {
-      const t = safeText(m.title).toLowerCase();
-      const g = safeText(m.genre).toLowerCase();
-      const id = (m.id || "").toLowerCase();
-      return t.includes(debounced) || g.includes(debounced) || id.includes(debounced);
+      const title = safeText(m.title).toLowerCase();
+      const genre = safeText(m.genre).toLowerCase();
+      const description = safeText(m.description).toLowerCase();
+      const author = safeText(m.author).toLowerCase();
+      const artist = safeText(m.artist).toLowerCase();
+      const status = safeText(m.status).toLowerCase();
+      const sourceUrl = safeText(m.sourceUrl).toLowerCase();
+      const id = safeText(m.id).toLowerCase();
+
+      return (
+        title.includes(debounced) ||
+        genre.includes(debounced) ||
+        description.includes(debounced) ||
+        author.includes(debounced) ||
+        artist.includes(debounced) ||
+        status.includes(debounced) ||
+        sourceUrl.includes(debounced) ||
+        id.includes(debounced)
+      );
     });
   }, [list, debounced]);
 
@@ -135,8 +183,12 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
       const c = tsSeconds(m.createdAt);
       return u || c || 0;
     };
+
     const newest = [...list].sort((a, b) => getScore(b) - getScore(a))[0];
-    return { newestId: newest?.id || null };
+
+    return {
+      newestId: newest?.id || null,
+    };
   }, [list]);
 
   if (loading) {
@@ -153,7 +205,7 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
         <input
           value={qtxt}
           onChange={(e) => setQtxt(e.target.value)}
-          placeholder="Buscar por título, gênero ou ID..."
+          placeholder="Buscar por título, gênero, autor, artista, status, ID..."
           className="flex-1 p-3 rounded-xl bg-zinc-800/70 border border-zinc-700 outline-none focus:border-cyan-400"
         />
 
@@ -178,6 +230,8 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map((m) => {
+          const cover = proxifyImage(m.cover);
+          const genres = splitGenres(m.genre);
           const last =
             typeof m.lastChapterNumber === "number" && m.lastChapterNumber > 0
               ? pad3(m.lastChapterNumber)
@@ -188,16 +242,50 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
               key={m.id}
               className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden"
             >
-              <img
-                src={proxify(m.cover)}
-                alt={m.title}
-                className="h-40 w-full object-cover"
-                loading="lazy"
-              />
+              {cover ? (
+                <img
+                  src={cover}
+                  alt={m.title || "Mangá"}
+                  className="h-40 w-full object-cover"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="h-40 w-full bg-zinc-800 flex items-center justify-center text-zinc-500">
+                  Sem capa
+                </div>
+              )}
 
               <div className="p-4 space-y-2">
-                <div className="font-bold line-clamp-1">{m.title}</div>
-                <div className="text-xs text-zinc-400">Gênero: {m.genre || "—"}</div>
+                <div className="font-bold line-clamp-1">{m.title || "Sem título"}</div>
+
+                <div className="flex flex-wrap gap-2">
+                  {genres.length > 0 ? (
+                    genres.slice(0, 2).map((g) => (
+                      <span
+                        key={`${m.id}-${g}`}
+                        className="rounded-full border border-zinc-700 px-2 py-1 text-[11px] text-zinc-300"
+                      >
+                        {g}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="rounded-full border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400">
+                      Sem gênero
+                    </span>
+                  )}
+
+                  {m.status ? (
+                    <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-300">
+                      {m.status}
+                    </span>
+                  ) : null}
+
+                  {m.autoSync ? (
+                    <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-300">
+                      Auto sync
+                    </span>
+                  ) : null}
+                </div>
 
                 <div className="text-xs text-zinc-400 flex flex-wrap gap-x-3 gap-y-1">
                   <span>
@@ -212,6 +300,13 @@ export default function MangaList({ onSelect }: { onSelect: (m: Manga) => void }
                     </span>
                   ) : null}
                 </div>
+
+                {(m.author || m.artist) && (
+                  <div className="text-xs text-zinc-500 space-y-1">
+                    {m.author ? <div>Autor: {m.author}</div> : null}
+                    {m.artist ? <div>Artista: {m.artist}</div> : null}
+                  </div>
+                )}
 
                 <div className="flex gap-2 pt-2">
                   <button

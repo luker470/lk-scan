@@ -1,8 +1,18 @@
+// app/admin/chapters/ImportChapterLinks.tsx
 "use client";
 
 import { useMemo, useState } from "react";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { useAuth } from "@/context/AuthContext";
+import { isAdmin } from "@/lib/admin";
 
 function pad3(n: number) {
   return String(n).padStart(3, "0");
@@ -13,6 +23,8 @@ function isDirectImageUrl(url: string) {
 }
 
 export default function ImportChapterLinks({ mangaId }: { mangaId: string }) {
+  const { user, loading: authLoading } = useAuth();
+
   const [chapterNumber, setChapterNumber] = useState(1);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
@@ -30,8 +42,23 @@ export default function ImportChapterLinks({ mangaId }: { mangaId: string }) {
   async function handleSave() {
     setMsg(null);
 
+    if (authLoading) {
+      setMsg("⏳ Aguarde, verificando login...");
+      return;
+    }
+
+    if (!user) {
+      setMsg("❌ Login necessário.");
+      return;
+    }
+
+    if (!isAdmin(user.uid)) {
+      setMsg("❌ Apenas administrador pode importar capítulos.");
+      return;
+    }
+
     if (!db) {
-      setMsg("❌ Firebase não inicializado. Confira as variáveis NEXT_PUBLIC_FIREBASE_* no Vercel.");
+      setMsg("❌ Firebase não inicializado. Confira as variáveis NEXT_PUBLIC_FIREBASE_*.");
       return;
     }
 
@@ -54,7 +81,11 @@ export default function ImportChapterLinks({ mangaId }: { mangaId: string }) {
 
     try {
       const chapterId = pad3(chapterNumber);
+      const mangaRef = doc(db, "mangas", mangaId);
       const chapterRef = doc(db, "mangas", mangaId, "chapters", chapterId);
+
+      const chapterSnap = await getDoc(chapterRef);
+      const existingData = chapterSnap.exists() ? chapterSnap.data() : null;
 
       const pages = links.map((url, i) => ({
         index: i + 1,
@@ -68,25 +99,32 @@ export default function ImportChapterLinks({ mangaId }: { mangaId: string }) {
           title: title.trim() || `Capítulo ${chapterId}`,
           pagesCount: pages.length,
           pages,
-          createdAt: serverTimestamp(),
+          views: existingData?.views ?? 0,
+          dayViews: existingData?.dayViews ?? 0,
+          weekViews: existingData?.weekViews ?? 0,
+          monthViews: existingData?.monthViews ?? 0,
+          createdAt: existingData?.createdAt ?? serverTimestamp(),
           updatedAt: serverTimestamp(),
         },
         { merge: true }
       );
 
-      // atualiza metadados do mangá
-      const mangaRef = doc(db, "mangas", mangaId);
-      const mangaSnap = await getDoc(mangaRef);
-      const mangaData = mangaSnap.exists() ? (mangaSnap.data() as any) : {};
+      const chaptersSnap = await getDocs(collection(db, "mangas", mangaId, "chapters"));
+      const chaptersCount = chaptersSnap.size;
 
-      const currentLast = Number(mangaData?.lastChapterNumber || 0);
-      const currentCount = Number(mangaData?.chaptersCount || 0);
+      let lastChapterNumber = 0;
+
+      chaptersSnap.forEach((docSnap) => {
+        const data = docSnap.data() as { number?: number | string };
+        const n = Number(data.number || 0);
+        if (n > lastChapterNumber) lastChapterNumber = n;
+      });
 
       await setDoc(
         mangaRef,
         {
-          chaptersCount: Math.max(currentCount, chapterNumber),
-          lastChapterNumber: Math.max(currentLast, chapterNumber),
+          chaptersCount,
+          lastChapterNumber,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -155,7 +193,7 @@ export default function ImportChapterLinks({ mangaId }: { mangaId: string }) {
 
         <button
           onClick={handleSave}
-          disabled={loading}
+          disabled={loading || authLoading}
           className="w-full rounded-xl bg-cyan-500 p-3 font-bold text-black hover:bg-cyan-600 disabled:opacity-50 transition"
         >
           {loading ? "Salvando..." : "Salvar Capítulo"}

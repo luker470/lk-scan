@@ -13,13 +13,25 @@ import { db } from "@/lib/firebase";
 
 import { useAuth } from "@/context/AuthContext";
 import { isAdmin } from "@/lib/admin";
+import CleanupTitlesManager from "./CleanupTitlesManager";
+import DiscoveryAutoImportManager from "./DiscoveryAutoImportManager";
+import SyncStatusBoard from "./SyncStatusBoard";
 
 import MangaList from "./MangaList";
 import ImportChapterLinks from "./chapters/ImportChapterLinks";
 import ImportMangaFull from "./chapters/ImportMangaFull";
 import ImportAutoFromUrl from "./chapters/ImportAutoFromUrl";
+import DiscoveryManager from "./discovery/DiscoveryManager";
+import AdminPingTest from "./AdminPingTest";
+import AutoSyncManager from "./AutoSyncManager";
 
-type TabKey = "dashboard" | "usar" | "criar" | "editar" | "importar";
+type TabKey =
+  | "dashboard"
+  | "usar"
+  | "criar"
+  | "editar"
+  | "importar"
+  | "descobrir";
 
 type MangaStats = {
   totalMangas: number;
@@ -28,6 +40,7 @@ type MangaStats = {
   totalChapters: number;
   latestTitles: string[];
   topTitles: string[];
+  autoSyncCount: number;
 };
 
 type MangaDoc = {
@@ -35,10 +48,18 @@ type MangaDoc = {
   title?: string;
   genre?: string;
   cover?: string;
+  banner?: string;
+  description?: string;
+  status?: string;
+  author?: string;
+  artist?: string;
+  sourceUrl?: string;
+  autoSync?: boolean;
   views?: number;
   weekViews?: number;
   chaptersCount?: number;
   updatedAt?: any;
+  createdAt?: any;
 };
 
 function cleanId(s: string) {
@@ -89,6 +110,13 @@ export default function AdminPage() {
   const [title, setTitle] = useState("");
   const [genre, setGenre] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
+  const [bannerUrl, setBannerUrl] = useState("");
+  const [description, setDescription] = useState("");
+  const [status, setStatus] = useState("");
+  const [author, setAuthor] = useState("");
+  const [artist, setArtist] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [autoSync, setAutoSync] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [mangaId, setMangaId] = useState<string>("");
@@ -102,9 +130,11 @@ export default function AdminPage() {
     totalChapters: 0,
     latestTitles: [],
     topTitles: [],
+    autoSyncCount: 0,
   });
 
   const [previewCover, setPreviewCover] = useState("");
+  const [previewBanner, setPreviewBanner] = useState("");
 
   const mangaIdToUse = useMemo(() => cleanId(mangaId), [mangaId]);
 
@@ -113,12 +143,31 @@ export default function AdminPage() {
   }, [coverUrl]);
 
   useEffect(() => {
+    setPreviewBanner(bannerUrl.trim());
+  }, [bannerUrl]);
+
+  useEffect(() => {
     async function loadStats() {
       setStatsLoading(true);
 
       try {
+        const firestore = db;
+
+        if (!firestore) {
+          setStats({
+            totalMangas: 0,
+            totalViews: 0,
+            totalWeekViews: 0,
+            totalChapters: 0,
+            latestTitles: [],
+            topTitles: [],
+            autoSyncCount: 0,
+          });
+          return;
+        }
+
         const snap = await getDocs(
-          query(collection(db, "mangas"), orderBy("createdAt", "desc"))
+          query(collection(firestore, "mangas"), orderBy("createdAt", "desc"))
         );
 
         const items = snap.docs.map((d) => ({
@@ -127,10 +176,7 @@ export default function AdminPage() {
         })) as MangaDoc[];
 
         const totalMangas = items.length;
-        const totalViews = items.reduce(
-          (sum, item) => sum + Number(item.views || 0),
-          0
-        );
+        const totalViews = items.reduce((sum, item) => sum + Number(item.views || 0), 0);
         const totalWeekViews = items.reduce(
           (sum, item) => sum + Number(item.weekViews || 0),
           0
@@ -139,6 +185,7 @@ export default function AdminPage() {
           (sum, item) => sum + Number(item.chaptersCount || 0),
           0
         );
+        const autoSyncCount = items.filter((item) => Boolean(item.autoSync)).length;
 
         const latestTitles = [...items]
           .sort((a, b) => tsSeconds(b.updatedAt) - tsSeconds(a.updatedAt))
@@ -157,6 +204,7 @@ export default function AdminPage() {
           totalChapters,
           latestTitles,
           topTitles,
+          autoSyncCount,
         });
       } catch (e) {
         console.error(e);
@@ -197,28 +245,74 @@ export default function AdminPage() {
   const adminUid = user.uid;
   const adminLabel = user.email || adminUid;
 
+  function clearForm() {
+    setTitle("");
+    setGenre("");
+    setCoverUrl("");
+    setBannerUrl("");
+    setDescription("");
+    setStatus("");
+    setAuthor("");
+    setArtist("");
+    setSourceUrl("");
+    setAutoSync(false);
+  }
+
   async function handleCreateManga() {
     const t = title.trim();
     const g = genre.trim();
     const c = coverUrl.trim();
+    const b = bannerUrl.trim();
+    const d = description.trim();
+    const s = status.trim();
+    const a = author.trim();
+    const ar = artist.trim();
+    const src = sourceUrl.trim();
 
-    if (!t || !g || !c) {
-      alert("Preencha Título, Gênero e LINK da capa.");
+    if (!t) {
+      alert("Preencha o título.");
       return;
     }
 
-    if (!isValidHttpUrl(c)) {
+    if (c && !isValidHttpUrl(c)) {
       alert("Link da capa inválido.");
+      return;
+    }
+
+    if (b && !isValidHttpUrl(b)) {
+      alert("Link do banner inválido.");
+      return;
+    }
+
+    if (src && !isValidHttpUrl(src)) {
+      alert("SourceUrl inválida.");
+      return;
+    }
+
+    const firestore = db;
+
+    if (!firestore) {
+      alert("Firebase não inicializado.");
       return;
     }
 
     setLoading(true);
 
     try {
-      const created = await addDoc(collection(db, "mangas"), {
+      const created = await addDoc(collection(firestore, "mangas"), {
         title: t,
         genre: g,
         cover: c,
+        banner: b || c,
+        description: d,
+        status: s,
+        author: a,
+        artist: ar,
+        sourceUrl: src,
+        sourceHost: src ? new URL(src).hostname : "",
+        autoSync: autoSync && !!src,
+        syncStatus: autoSync && !!src ? "active" : "",
+        lastSyncError: "",
         views: 0,
         dayViews: 0,
         weekViews: 0,
@@ -233,6 +327,7 @@ export default function AdminPage() {
       setManualId(created.id);
       alert(`Mangá criado! ID: ${created.id}`);
       setTab("importar");
+      clearForm();
     } catch (e) {
       console.error(e);
       alert("Erro ao criar mangá.");
@@ -258,10 +353,9 @@ export default function AdminPage() {
   function handleClearId() {
     setMangaId("");
     setManualId("");
-    setTitle("");
-    setGenre("");
-    setCoverUrl("");
+    clearForm();
     setPreviewCover("");
+    setPreviewBanner("");
   }
 
   async function handleCopyId() {
@@ -281,18 +375,27 @@ export default function AdminPage() {
       return;
     }
 
+    const payload = {
+      mangaId: mangaIdToUse,
+      title,
+      genre,
+      cover: coverUrl,
+      banner: bannerUrl,
+      description,
+      status,
+      author,
+      artist,
+      sourceUrl,
+      autoSync,
+    };
+
     const res = await fetch("/api/admin/manga", {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
         "x-user-id": adminUid,
       },
-      body: JSON.stringify({
-        mangaId: mangaIdToUse,
-        title,
-        genre,
-        cover: coverUrl,
-      }),
+      body: JSON.stringify(payload),
     });
 
     const txt = await res.text();
@@ -349,9 +452,7 @@ export default function AdminPage() {
               <div className="mt-2 text-sm text-zinc-400">
                 Manga em uso:{" "}
                 {mangaIdToUse ? (
-                  <span className="text-cyan-300 font-semibold">
-                    {mangaIdToUse}
-                  </span>
+                  <span className="text-cyan-300 font-semibold">{mangaIdToUse}</span>
                 ) : (
                   <span>nenhum selecionado</span>
                 )}
@@ -402,12 +503,15 @@ export default function AdminPage() {
             <TabButton active={tab === "importar"} onClick={() => setTab("importar")}>
               📥 Importar capítulos
             </TabButton>
+            <TabButton active={tab === "descobrir"} onClick={() => setTab("descobrir")}>
+              🔎 Descobrir
+            </TabButton>
           </div>
         </section>
 
         {tab === "dashboard" && (
           <section className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
                 <div className="text-sm text-zinc-400">Mangás cadastrados</div>
                 <div className="mt-2 text-3xl font-extrabold text-cyan-400">
@@ -433,6 +537,13 @@ export default function AdminPage() {
                 <div className="text-sm text-zinc-400">Views da semana</div>
                 <div className="mt-2 text-3xl font-extrabold text-cyan-400">
                   {statsLoading ? "..." : stats.totalWeekViews.toLocaleString()}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+                <div className="text-sm text-zinc-400">Auto sync ativos</div>
+                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+                  {statsLoading ? "..." : stats.autoSyncCount}
                 </div>
               </div>
             </div>
@@ -469,6 +580,13 @@ export default function AdminPage() {
                   >
                     Importar capítulos
                   </button>
+
+                  <button
+                    onClick={() => setTab("descobrir")}
+                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition sm:col-span-2"
+                  >
+                    Descoberta automática
+                  </button>
                 </div>
               </div>
 
@@ -490,9 +608,7 @@ export default function AdminPage() {
 
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
                     <span className="text-zinc-400">Admin logado: </span>
-                    <span className="text-zinc-200 font-semibold">
-                      {adminLabel}
-                    </span>
+                    <span className="text-zinc-200 font-semibold">{adminLabel}</span>
                   </div>
                 </div>
               </div>
@@ -500,9 +616,7 @@ export default function AdminPage() {
 
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">
-                  🆕 Últimos atualizados
-                </h2>
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">🆕 Últimos atualizados</h2>
 
                 <div className="space-y-2">
                   {stats.latestTitles.length === 0 ? (
@@ -521,9 +635,7 @@ export default function AdminPage() {
               </div>
 
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">
-                  🔥 Mais vistos
-                </h2>
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">🔥 Mais vistos</h2>
 
                 <div className="space-y-2">
                   {stats.topTitles.length === 0 ? (
@@ -541,6 +653,12 @@ export default function AdminPage() {
                 </div>
               </div>
             </div>
+
+            <AdminPingTest />
+            <AutoSyncManager />
+            <CleanupTitlesManager />
+            <DiscoveryAutoImportManager />
+            <SyncStatusBoard />
           </section>
         )}
 
@@ -572,7 +690,17 @@ export default function AdminPage() {
                 onSelect={(m) => {
                   setMangaId(m.id);
                   setManualId(m.id);
-                  setTab("importar");
+                  setTitle(m.title || "");
+                  setGenre(m.genre || "");
+                  setCoverUrl(m.cover || "");
+                  setBannerUrl(m.banner || "");
+                  setDescription(m.description || "");
+                  setStatus(m.status || "");
+                  setAuthor(m.author || "");
+                  setArtist(m.artist || "");
+                  setSourceUrl(m.sourceUrl || "");
+                  setAutoSync(Boolean(m.autoSync));
+                  setTab("editar");
                 }}
               />
             </div>
@@ -615,6 +743,75 @@ export default function AdminPage() {
                   />
                 </label>
 
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Banner (URL)</div>
+                  <input
+                    placeholder="https://..."
+                    value={bannerUrl}
+                    onChange={(e) => setBannerUrl(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                  />
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Descrição</div>
+                  <textarea
+                    rows={5}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                  />
+                </label>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <label className="space-y-1">
+                    <div className="text-sm text-zinc-300">Status</div>
+                    <input
+                      placeholder="ongoing / completed"
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
+
+                  <label className="space-y-1">
+                    <div className="text-sm text-zinc-300">Autor</div>
+                    <input
+                      value={author}
+                      onChange={(e) => setAuthor(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
+
+                  <label className="space-y-1">
+                    <div className="text-sm text-zinc-300">Artista</div>
+                    <input
+                      value={artist}
+                      onChange={(e) => setArtist(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
+
+                  <label className="space-y-1">
+                    <div className="text-sm text-zinc-300">Source URL</div>
+                    <input
+                      placeholder="https://site.com/manga/obra/"
+                      value={sourceUrl}
+                      onChange={(e) => setSourceUrl(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
+                </div>
+
+                <label className="flex items-center gap-2 text-sm text-zinc-300">
+                  <input
+                    type="checkbox"
+                    checked={autoSync}
+                    onChange={(e) => setAutoSync(e.target.checked)}
+                  />
+                  Ativar sincronização automática
+                </label>
+
                 <button
                   onClick={handleCreateManga}
                   disabled={loading}
@@ -629,21 +826,30 @@ export default function AdminPage() {
               <h2 className="text-lg font-bold text-cyan-400 mb-4">👁 Prévia</h2>
 
               <div className="rounded-2xl overflow-hidden border border-zinc-800 bg-black/30">
-                {previewCover ? (
+                {previewBanner || previewCover ? (
                   <img
-                    src={previewCover}
+                    src={previewBanner || previewCover}
                     alt={title || "Prévia"}
-                    className="w-full h-80 object-cover"
+                    className="w-full h-40 object-cover"
                   />
                 ) : (
-                  <div className="w-full h-80 flex items-center justify-center text-zinc-500">
-                    Sem capa
+                  <div className="w-full h-40 flex items-center justify-center text-zinc-500">
+                    Sem banner
                   </div>
                 )}
 
                 <div className="p-4 space-y-2">
+                  {previewCover ? (
+                    <img
+                      src={previewCover}
+                      alt={title || "Capa"}
+                      className="w-28 h-40 object-cover rounded-xl border border-zinc-700"
+                    />
+                  ) : null}
+
                   <div className="font-bold text-lg">{title || "Título do mangá"}</div>
                   <div className="text-sm text-zinc-400">{genre || "Gênero"}</div>
+                  <div className="text-xs text-zinc-500">{status || "Status"}</div>
                 </div>
               </div>
             </div>
@@ -662,7 +868,7 @@ export default function AdminPage() {
               ) : (
                 <>
                   <label className="space-y-1 block">
-                    <div className="text-sm text-zinc-300">Novo título</div>
+                    <div className="text-sm text-zinc-300">Título</div>
                     <input
                       value={title}
                       onChange={(e) => setTitle(e.target.value)}
@@ -671,7 +877,7 @@ export default function AdminPage() {
                   </label>
 
                   <label className="space-y-1 block">
-                    <div className="text-sm text-zinc-300">Novo gênero</div>
+                    <div className="text-sm text-zinc-300">Gênero</div>
                     <input
                       value={genre}
                       onChange={(e) => setGenre(e.target.value)}
@@ -680,12 +886,78 @@ export default function AdminPage() {
                   </label>
 
                   <label className="space-y-1 block">
-                    <div className="text-sm text-zinc-300">Nova capa</div>
+                    <div className="text-sm text-zinc-300">Capa</div>
                     <input
                       value={coverUrl}
                       onChange={(e) => setCoverUrl(e.target.value)}
                       className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
                     />
+                  </label>
+
+                  <label className="space-y-1 block">
+                    <div className="text-sm text-zinc-300">Banner</div>
+                    <input
+                      value={bannerUrl}
+                      onChange={(e) => setBannerUrl(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
+
+                  <label className="space-y-1 block">
+                    <div className="text-sm text-zinc-300">Descrição</div>
+                    <textarea
+                      rows={5}
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                    />
+                  </label>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="space-y-1 block">
+                      <div className="text-sm text-zinc-300">Status</div>
+                      <input
+                        value={status}
+                        onChange={(e) => setStatus(e.target.value)}
+                        className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                      />
+                    </label>
+
+                    <label className="space-y-1 block">
+                      <div className="text-sm text-zinc-300">Autor</div>
+                      <input
+                        value={author}
+                        onChange={(e) => setAuthor(e.target.value)}
+                        className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                      />
+                    </label>
+
+                    <label className="space-y-1 block">
+                      <div className="text-sm text-zinc-300">Artista</div>
+                      <input
+                        value={artist}
+                        onChange={(e) => setArtist(e.target.value)}
+                        className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                      />
+                    </label>
+
+                    <label className="space-y-1 block">
+                      <div className="text-sm text-zinc-300">Source URL</div>
+                      <input
+                        value={sourceUrl}
+                        onChange={(e) => setSourceUrl(e.target.value)}
+                        className="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none focus:border-cyan-400"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="flex items-center gap-2 text-sm text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={autoSync}
+                      onChange={(e) => setAutoSync(e.target.checked)}
+                    />
+                    Ativar sincronização automática
                   </label>
 
                   <div className="flex flex-col md:flex-row gap-3">
@@ -732,6 +1004,21 @@ export default function AdminPage() {
                     </div>
                   )}
                 </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
+                  <span className="text-zinc-400">Prévia banner:</span>
+                  {previewBanner ? (
+                    <img
+                      src={previewBanner}
+                      alt="Banner"
+                      className="mt-3 rounded-xl w-full h-40 object-cover"
+                    />
+                  ) : (
+                    <div className="mt-3 rounded-xl w-full h-40 bg-zinc-800 flex items-center justify-center text-zinc-500">
+                      Sem banner
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </section>
@@ -768,6 +1055,12 @@ export default function AdminPage() {
               </section>
             )}
           </>
+        )}
+
+        {tab === "descobrir" && (
+          <section>
+            <DiscoveryManager />
+          </section>
         )}
       </div>
     </main>

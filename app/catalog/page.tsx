@@ -9,8 +9,8 @@ import {
   orderBy,
   query,
   startAfter,
-  type DocumentData,
-  type QueryDocumentSnapshot,
+  QueryDocumentSnapshot,
+  DocumentData,
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
@@ -19,8 +19,12 @@ type Manga = {
   id: string;
   title: string;
   cover?: string;
+  banner?: string;
   genre?: string;
   status?: string;
+  description?: string;
+  author?: string;
+  artist?: string;
   views?: number;
   chaptersCount?: number;
   updatedAt?: any;
@@ -28,8 +32,6 @@ type Manga = {
 };
 
 type OrderMode = "updated" | "created" | "az" | "views";
-
-const PAGE_SIZE = 24;
 
 function tsSeconds(v: any) {
   return v?.seconds ?? 0;
@@ -47,6 +49,15 @@ function formatStatus(status?: string) {
   return status;
 }
 
+function splitGenres(value?: string) {
+  return String(value || "")
+    .split(",")
+    .map((g) => g.trim())
+    .filter(Boolean);
+}
+
+const PAGE_SIZE = 40;
+
 export default function CatalogPage() {
   const [items, setItems] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,45 +70,67 @@ export default function CatalogPage() {
   const [status, setStatus] = useState("Todos");
   const [orderMode, setOrderMode] = useState<OrderMode>("updated");
 
-  async function loadPage(reset = false) {
+  async function load(reset = false) {
+    if (!db) {
+      setItems([]);
+      setHasMore(false);
+      setLoading(false);
+      setLoadingMore(false);
+      return;
+    }
+
     if (reset) {
       setLoading(true);
-      setHasMore(true);
       setLastDoc(null);
+      setHasMore(true);
     } else {
+      if (!hasMore || loadingMore) return;
       setLoadingMore(true);
     }
 
     try {
-      if (!db) {
-        setItems([]);
-        setHasMore(false);
-        return;
-      }
-
       const colRef = collection(db, "mangas");
+
+      const currentLastDoc = reset ? null : lastDoc;
+
       let qRef = query(colRef, orderBy("updatedAt", "desc"), limit(PAGE_SIZE));
 
-      if (!reset && lastDoc) {
+      if (currentLastDoc) {
         qRef = query(
           colRef,
           orderBy("updatedAt", "desc"),
-          startAfter(lastDoc),
+          startAfter(currentLastDoc),
           limit(PAGE_SIZE)
         );
       }
 
       const snap = await getDocs(qRef);
-      const docs = snap.docs;
 
-      const list = docs.map((d) => ({
+      const list = snap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as Omit<Manga, "id">),
       }));
 
-      setItems((prev) => (reset ? list : [...prev, ...list]));
-      setLastDoc(docs.length ? docs[docs.length - 1] : null);
-      setHasMore(docs.length === PAGE_SIZE);
+      if (reset) {
+        setItems(list);
+      } else {
+        setItems((prev) => {
+          const map = new Map<string, Manga>();
+
+          for (const item of prev) {
+            map.set(item.id, item);
+          }
+
+          for (const item of list) {
+            map.set(item.id, item);
+          }
+
+          return Array.from(map.values());
+        });
+      }
+
+      setLastDoc(snap.docs.length ? snap.docs[snap.docs.length - 1] : null);
+      setHasMore(snap.docs.length === PAGE_SIZE);
     } catch (e) {
       console.error("Erro ao carregar catálogo:", e);
       if (reset) setItems([]);
@@ -109,18 +142,25 @@ export default function CatalogPage() {
   }
 
   useEffect(() => {
-    loadPage(true);
+    load(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const genres = useMemo(() => {
     const set = new Set<string>();
-    items.forEach((m) => m.genre && set.add(m.genre));
+
+    items.forEach((m) => {
+      splitGenres(m.genre).forEach((g) => set.add(g));
+    });
+
     return ["Todos", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
   const statuses = useMemo(() => {
     const set = new Set<string>();
-    items.forEach((m) => m.status && set.add(m.status));
+    items.forEach((m) => {
+      if (m.status) set.add(m.status);
+    });
     return ["Todos", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [items]);
 
@@ -128,9 +168,25 @@ export default function CatalogPage() {
     const q = search.toLowerCase().trim();
 
     let list = items.filter((m) => {
-      const okSearch = q ? (m.title || "").toLowerCase().includes(q) : true;
-      const okGenre = genre === "Todos" ? true : m.genre === genre;
+      const title = (m.title || "").toLowerCase();
+      const genresText = (m.genre || "").toLowerCase();
+      const author = (m.author || "").toLowerCase();
+      const artist = (m.artist || "").toLowerCase();
+      const description = (m.description || "").toLowerCase();
+
+      const okSearch = q
+        ? title.includes(q) ||
+          genresText.includes(q) ||
+          author.includes(q) ||
+          artist.includes(q) ||
+          description.includes(q)
+        : true;
+
+      const okGenre =
+        genre === "Todos" ? true : splitGenres(m.genre).includes(genre);
+
       const okStatus = status === "Todos" ? true : m.status === status;
+
       return okSearch && okGenre && okStatus;
     });
 
@@ -146,7 +202,13 @@ export default function CatalogPage() {
         const au = tsSeconds(a.updatedAt);
 
         if (bu !== au) return bu - au;
-        return tsSeconds(b.createdAt) - tsSeconds(a.createdAt);
+
+        const bc = tsSeconds(b.createdAt);
+        const ac = tsSeconds(a.createdAt);
+
+        if (bc !== ac) return bc - ac;
+
+        return (a.title || "").localeCompare(b.title || "");
       });
     }
 
@@ -277,6 +339,20 @@ export default function CatalogPage() {
                         )}
                       </div>
 
+                      {(manga.author || manga.artist) && (
+                        <div className="text-[11px] text-zinc-500 line-clamp-2">
+                          {manga.author ? `Autor: ${manga.author}` : ""}
+                          {manga.author && manga.artist ? " • " : ""}
+                          {manga.artist ? `Artista: ${manga.artist}` : ""}
+                        </div>
+                      )}
+
+                      {!!manga.description && (
+                        <div className="text-[11px] text-zinc-500 line-clamp-2">
+                          {manga.description}
+                        </div>
+                      )}
+
                       <div className="text-[11px] text-zinc-500 space-y-1">
                         <div>
                           {typeof manga.chaptersCount === "number"
@@ -294,14 +370,14 @@ export default function CatalogPage() {
             <div className="pt-4 flex justify-center">
               {hasMore ? (
                 <button
-                  onClick={() => loadPage(false)}
+                  onClick={() => load(false)}
                   disabled={loadingMore}
                   className="px-5 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition font-semibold disabled:opacity-50"
                 >
                   {loadingMore ? "Carregando..." : "Carregar mais"}
                 </button>
               ) : (
-                <div className="text-xs text-zinc-500">Todos os mangás carregados.</div>
+                <div className="text-xs text-zinc-500">Fim do catálogo carregado.</div>
               )}
             </div>
           </>

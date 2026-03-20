@@ -39,7 +39,13 @@ export async function GET(req: Request) {
   } catch (error: unknown) {
     console.error("GET /api/history error:", error);
 
-    return NextResponse.json({ ok: false, items: [] }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Internal error";
+
+    return NextResponse.json(
+      { ok: false, items: [], error: message },
+      { status: 500 }
+    );
   }
 }
 

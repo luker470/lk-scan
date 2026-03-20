@@ -1,3 +1,4 @@
+// app/admin/chapters/ImportAutoFromUrl.tsx
 "use client";
 
 import { useState } from "react";
@@ -40,9 +41,38 @@ export default function ImportAutoFromUrl({
 
   function extractUrls(text: string) {
     const matches = text.match(/https?:\/\/[^\s"'<>]+/g) || [];
-    return matches
-      .map((s) => s.trim())
-      .filter((u) => u.startsWith("http"));
+    return matches.map((s) => s.trim()).filter((u) => u.startsWith("http"));
+  }
+
+  async function recalcMangaMeta(mangaId: string) {
+    if (!db) throw new Error("Firebase não inicializado.");
+
+    const mangaRef = doc(db, "mangas", mangaId);
+    const chaptersSnap = await getDocs(collection(db, "mangas", mangaId, "chapters"));
+    const chaptersCount = chaptersSnap.size;
+
+    let lastChapterNumber = 0;
+
+    chaptersSnap.forEach((docSnap) => {
+      const data = docSnap.data() as { number?: number | string };
+      const n = Number(data.number || 0);
+      if (n > lastChapterNumber) lastChapterNumber = n;
+    });
+
+    await setDoc(
+      mangaRef,
+      {
+        updatedAt: new Date(),
+        chaptersCount,
+        lastChapterNumber,
+      },
+      { merge: true }
+    );
+
+    return {
+      chaptersCount,
+      lastChapterNumber,
+    };
   }
 
   async function saveImportedChapterClient(params: {
@@ -60,8 +90,11 @@ export default function ImportAutoFromUrl({
       pages,
     } = params;
 
+    if (!db) {
+      throw new Error("Firebase não inicializado.");
+    }
+
     const chapterId = pad3(chapterNumber);
-    const mangaRef = doc(db, "mangas", mangaId);
     const chapterRef = doc(db, "mangas", mangaId, "chapters", chapterId);
 
     const existingChapterSnap = await getDoc(chapterRef);
@@ -97,7 +130,7 @@ export default function ImportAutoFromUrl({
       chapterRef,
       {
         number: chapterNumber,
-        title: `Capítulo ${chapterId}`,
+        title: existingData?.title || `Capítulo ${chapterId}`,
         pagesCount: pages.length,
         pages,
         sourceUrl: chapterUrl,
@@ -114,33 +147,12 @@ export default function ImportAutoFromUrl({
       { merge: true }
     );
 
-    const chaptersSnap = await getDocs(collection(db, "mangas", mangaId, "chapters"));
-    const chaptersCount = chaptersSnap.size;
-
-    let lastChapterNumber = 0;
-
-    chaptersSnap.forEach((docSnap) => {
-      const data = docSnap.data() as { number?: number | string };
-      const n = Number(data.number || 0);
-      if (n > lastChapterNumber) {
-        lastChapterNumber = n;
-      }
-    });
-
-    await setDoc(
-      mangaRef,
-      {
-        updatedAt: now,
-        chaptersCount,
-        lastChapterNumber,
-      },
-      { merge: true }
-    );
+    const meta = await recalcMangaMeta(mangaId);
 
     return {
       chapterId,
-      chaptersCount,
-      lastChapterNumber,
+      chaptersCount: meta.chaptersCount,
+      lastChapterNumber: meta.lastChapterNumber,
       pagesCount: pages.length,
     };
   }
@@ -201,6 +213,11 @@ export default function ImportAutoFromUrl({
       return;
     }
 
+    if (!db) {
+      setMsg("❌ Firebase não inicializado.");
+      return;
+    }
+
     if (!mangaId) {
       setMsg("❌ Defina um MangaId.");
       return;
@@ -223,6 +240,8 @@ export default function ImportAutoFromUrl({
     try {
       let currentChapter = chapterNumber;
       let imported = 0;
+      let failed = 0;
+      const errors: string[] = [];
 
       for (let i = 0; i < urls.length; i++) {
         const url = urls[i];
@@ -231,21 +250,36 @@ export default function ImportAutoFromUrl({
           `Importando capítulo ${currentChapter} (${i + 1}/${urls.length})`
         );
 
-        await importOneChapter({
-          mangaId,
-          chapterNumber: currentChapter,
-          chapterUrl: url,
-          overwriteExisting,
-        });
+        try {
+          await importOneChapter({
+            mangaId,
+            chapterNumber: currentChapter,
+            chapterUrl: url,
+            overwriteExisting,
+          });
 
-        imported++;
+          imported++;
+        } catch (e: unknown) {
+          failed++;
+          const message =
+            e instanceof Error ? e.message : "Falha durante a importação.";
+          errors.push(`Capítulo ${pad3(currentChapter)}: ${message}`);
+        }
+
         currentChapter++;
       }
 
-      setMsg(`✅ Importados ${imported} capítulos com sucesso.`);
       setLinksText("");
       setChapterNumber(currentChapter);
       setProgress(null);
+
+      if (failed === 0) {
+        setMsg(`✅ Importados ${imported} capítulos com sucesso.`);
+      } else {
+        setMsg(
+          `✅ Importados: ${imported}\n❌ Falhas: ${failed}\n\n${errors.join("\n")}`
+        );
+      }
     } catch (e: unknown) {
       console.error(e);
 
