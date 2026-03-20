@@ -3,11 +3,31 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { proxifyImage } from "@/lib/imgProxy";
 
+type ReaderPageInput =
+  | string
+  | {
+      url?: string;
+      src?: string;
+      mirrorUrl?: string;
+      storageUrl?: string;
+    };
+
+function resolvePageUrl(page: ReaderPageInput): string {
+  if (typeof page === "string") return page;
+
+  return (
+    String(page?.mirrorUrl || "").trim() ||
+    String(page?.storageUrl || "").trim() ||
+    String(page?.url || "").trim() ||
+    String(page?.src || "").trim()
+  );
+}
+
 export default function ReaderPro({
   pages,
   storageKey,
 }: {
-  pages: string[];
+  pages: ReaderPageInput[];
   storageKey?: string;
 }) {
   const [mode, setMode] = useState<"fitWidth" | "fitHeight">("fitWidth");
@@ -16,23 +36,32 @@ export default function ReaderPro({
 
   const proxied = useMemo(() => {
     return pages
-      .map((u, originalIndex) => {
-        const src = proxifyImage(u);
+      .map((page, originalIndex) => {
+        const raw = resolvePageUrl(page);
+        if (!raw) return null;
+
+        const src = proxifyImage(raw);
         if (!src) return null;
 
         return {
+          raw,
           src,
           originalIndex,
           pageNumber: originalIndex + 1,
+          isMirror:
+            raw.includes("storage.googleapis.com") ||
+            raw.includes("firebasestorage.googleapis.com"),
         };
       })
       .filter(
         (
           item
         ): item is {
+          raw: string;
           src: string;
           originalIndex: number;
           pageNumber: number;
+          isMirror: boolean;
         } => item !== null
       );
   }, [pages]);
@@ -41,8 +70,8 @@ export default function ReaderPro({
     if (!storageKey) return;
     const v = localStorage.getItem(storageKey);
     const n = v ? Number(v) : 0;
-    if (n && n >= 1 && n <= pages.length) setCurrent(n);
-  }, [storageKey, pages.length]);
+    if (n && n >= 1 && n <= proxied.length) setCurrent(n);
+  }, [storageKey, proxied.length]);
 
   useEffect(() => {
     if (!storageKey) return;
@@ -144,8 +173,11 @@ export default function ReaderPro({
               data-idx={idx}
               className="rounded-2xl border border-zinc-800 bg-zinc-900/40 overflow-hidden"
             >
-              <div className="px-3 py-2 text-xs text-zinc-400 border-b border-zinc-800">
-                Página {item.pageNumber}
+              <div className="px-3 py-2 text-xs text-zinc-400 border-b border-zinc-800 flex items-center justify-between gap-2">
+                <span>Página {item.pageNumber}</span>
+                {item.isMirror ? (
+                  <span className="text-cyan-400 font-semibold">Mirror</span>
+                ) : null}
               </div>
 
               <div className="flex justify-center bg-black">
@@ -161,6 +193,9 @@ export default function ReaderPro({
                   onError={(e) => {
                     const img = e.currentTarget as HTMLImageElement;
                     const old = img.src;
+
+                    if (old.includes("retry=1")) return;
+
                     img.src = old.includes("?") ? `${old}&retry=1` : `${old}?retry=1`;
                   }}
                 />

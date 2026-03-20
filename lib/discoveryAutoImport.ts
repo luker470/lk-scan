@@ -6,7 +6,7 @@ import {
   buildChapterId,
   type DiscoveredChapter,
 } from "@/lib/chapterDiscovery";
-import { fetchMangaDetails } from "@/lib/mangaDetails";
+import { normalizeAndUpsertManga } from "@/lib/mangaNormalizer";
 
 type AutoImportOptions = {
   maxChapters?: number;
@@ -29,72 +29,6 @@ type AutoImportItemResult = {
 function safeNumber(value: unknown, fallback = 0) {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
-}
-
-async function createOrUpdateMangaFromDiscovery(
-  db: Firestore,
-  item: {
-    title: string;
-    url: string;
-    cover?: string;
-    description?: string;
-    genres?: string[];
-    latestChapter?: string;
-    source: string;
-  }
-) {
-  const details = await fetchMangaDetails(item.url).catch(() => null);
-
-  const cleanTitle = sanitizeMangaTitle(
-    details?.title || item.title,
-    item.url
-  );
-
-  const mangaId = slugify(cleanTitle || `manga-${Date.now()}`);
-  const mangaRef = db.collection("mangas").doc(mangaId);
-  const mangaSnap = await mangaRef.get();
-
-  const payload = {
-    title: cleanTitle,
-    slug: mangaId,
-    cover: details?.cover || item.cover || "",
-    banner: details?.banner || details?.cover || item.cover || "",
-    description: details?.description || item.description || "",
-    genre:
-      (details?.genres && details.genres.length > 0
-        ? details.genres.join(", ")
-        : Array.isArray(item.genres)
-        ? item.genres.join(", ")
-        : "") || "",
-    status: details?.status || "Em andamento",
-    author: details?.author || "",
-    artist: details?.artist || "",
-    sourceUrl: item.url || "",
-    sourceSite: item.source || "",
-    sourceHost: details?.sourceHost || new URL(item.url).hostname,
-    latestChapter: item.latestChapter || "",
-    autoSync: true,
-    syncStatus: "active",
-    lastSyncError: "",
-    updatedAt: FieldValue.serverTimestamp(),
-  };
-
-  if (!mangaSnap.exists) {
-    await mangaRef.set({
-      ...payload,
-      views: 0,
-      chaptersCount: 0,
-      createdAt: FieldValue.serverTimestamp(),
-    });
-  } else {
-    await mangaRef.set(payload, { merge: true });
-  }
-
-  return {
-    mangaId,
-    created: !mangaSnap.exists,
-    title: cleanTitle,
-  };
 }
 
 type ExistingChapterMap = {
@@ -211,6 +145,7 @@ async function importChaptersToManga(
   await mangaRef.set(
     {
       autoSync: true,
+      syncEnabled: true,
       syncStatus: "active",
       syncMode: "incremental",
       lastSyncError: "",
@@ -246,15 +181,24 @@ export async function discoverAndAutoImportFromSource(
 
   for (const item of discovered) {
     try {
-      const manga = await createOrUpdateMangaFromDiscovery(db, item);
+      const manga = await normalizeAndUpsertManga(db, {
+        title: item.title,
+        sourceUrl: item.url,
+        cover: item.cover || "",
+        description: item.description || "",
+        genres: item.genres || [],
+        latestChapter: item.latestChapter || "",
+        sourceSite: item.source || "",
+      });
+
       const imported = await importChaptersToManga(db, manga.mangaId, item.url, options);
       const discoveredId = `${source}__${slugify(item.url)}`;
 
       await db.collection("discovered_mangas").doc(discoveredId).set(
         {
           source: item.source,
-          title: manga.title,
-          cleanTitle: manga.title,
+          title: manga.payload.title,
+          cleanTitle: manga.payload.title,
           url: item.url,
           cover: item.cover || "",
           latestChapter: item.latestChapter || "",
@@ -272,7 +216,7 @@ export async function discoverAndAutoImportFromSource(
 
       results.push({
         sourceUrl: item.url,
-        title: manga.title,
+        title: manga.payload.title,
         mangaId: manga.mangaId,
         created: manga.created,
         imported: imported.imported,

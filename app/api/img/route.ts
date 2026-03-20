@@ -16,7 +16,6 @@ const ALLOWED_HOSTS = new Set<string>([
   "mangaonline.red",
   "www.mangaonline.red",
 
-  // ✅ permitir imgur (você tinha 403)
   "i.imgur.com",
   "imgur.com",
 
@@ -49,20 +48,18 @@ async function fetchWithTimeout(url: string, ms: number) {
 
   try {
     const u = new URL(url);
-
-    // Referer ajuda nos sites que bloqueiam hotlink
     const referer = `${u.protocol}//${u.host}/`;
 
     return await fetch(url, {
       signal: controller.signal,
       redirect: "follow",
-      // ✅ não-store para sempre buscar do upstream; cache vai ser via headers na resposta
       cache: "no-store",
       headers: {
         "User-Agent":
           "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
         Referer: referer,
+        Origin: `${u.protocol}//${u.host}`,
       },
     });
   } finally {
@@ -73,20 +70,23 @@ async function fetchWithTimeout(url: string, ms: number) {
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const url = searchParams.get("url");
+  const mirrorUrl = searchParams.get("mirrorUrl");
 
-  // ✅ evita /api/img?url=undefined (vira 400 e não 403)
-  if (!url || url === "undefined" || url === "null") {
+  const finalUrl = (mirrorUrl || url || "").trim();
+
+  if (!finalUrl || finalUrl === "undefined" || finalUrl === "null") {
     return new NextResponse("Missing url", { status: 400 });
   }
 
-  if (!isAllowed(url)) return new NextResponse("Host not allowed", { status: 403 });
+  if (!isAllowed(finalUrl)) {
+    return new NextResponse("Host not allowed", { status: 403 });
+  }
 
   try {
-    let res = await fetchWithTimeout(url, 20000);
+    let res = await fetchWithTimeout(finalUrl, 20000);
 
     if (!res.ok) {
-      // retry simples
-      res = await fetchWithTimeout(url, 20000);
+      res = await fetchWithTimeout(finalUrl, 20000);
     }
 
     if (!res.ok) {
@@ -94,12 +94,11 @@ export async function GET(req: Request) {
     }
 
     const buf = await res.arrayBuffer();
-    const contentType = res.headers.get("content-type") || guessContentType(url);
+    const contentType = res.headers.get("content-type") || guessContentType(finalUrl);
 
     return new NextResponse(buf, {
       headers: {
         "Content-Type": contentType,
-        // ✅ cache: browser 1 dia, CDN 7 dias, revalida suave
         "Cache-Control":
           "public, max-age=86400, s-maxage=604800, stale-while-revalidate=2592000",
         "Access-Control-Allow-Origin": "*",

@@ -16,6 +16,9 @@ import { isAdmin } from "@/lib/admin";
 import CleanupTitlesManager from "./CleanupTitlesManager";
 import DiscoveryAutoImportManager from "./DiscoveryAutoImportManager";
 import SyncStatusBoard from "./SyncStatusBoard";
+import SystemAutomationManager from "./SystemAutomationManager";
+import SourceHealthBoard from "./SourceHealthBoard";
+import BackupManager from "./BackupManager";
 
 import MangaList from "./MangaList";
 import ImportChapterLinks from "./chapters/ImportChapterLinks";
@@ -659,6 +662,9 @@ export default function AdminPage() {
             <CleanupTitlesManager />
             <DiscoveryAutoImportManager />
             <SyncStatusBoard />
+            <SystemAutomationManager />
+            <SourceHealthBoard />
+            <BackupManager />
           </section>
         )}
 
