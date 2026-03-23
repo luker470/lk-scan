@@ -1,28 +1,20 @@
 {
   "crons": [
     {
-      "path": "/api/cron/source-health?secret=lk_scan_cron_2026_super_seguro",
-      "schedule": "0 */3 * * *"
+      "path": "/api/cron/automation?secret=lk_scan_cron_2026_super_seguro",
+      "schedule": "*/5 * * * *"
     },
     {
-      "path": "/api/cron/discovery-auto?secret=lk_scan_cron_2026_super_seguro&source=mangaonlinered&maxChapters=2",
-      "schedule": "0 */6 * * *"
-    },
-    {
-      "path": "/api/cron/sync?secret=lk_scan_cron_2026_super_seguro&maxChapters=3",
-      "schedule": "0 */2 * * *"
+      "path": "/api/cron/stats?secret=lk_scan_cron_2026_super_seguro",
+      "schedule": "*/10 * * * *"
     },
     {
       "path": "/api/cron/backup?secret=lk_scan_cron_2026_super_seguro",
-      "schedule": "30 */6 * * *"
+      "schedule": "0 */6 * * *"
     },
     {
       "path": "/api/cron/mirror?secret=lk_scan_cron_2026_super_seguro",
-      "schedule": "45 */8 * * *"
-    },
-    {
-      "path": "/api/cron/auto-system?secret=lk_scan_cron_2026_super_seguro&source=mangaonlinered&maxChapters=2",
-      "schedule": "15 */12 * * *"
+      "schedule": "15 */8 * * *"
     }
   ]
 }

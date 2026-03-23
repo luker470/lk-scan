@@ -1,121 +1,156 @@
-"use client";
+import { NextResponse } from "next/server";
+import { getAdminDb } from "@/lib/firebaseAdmin";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useAuth } from "@/context/AuthContext";
-import { proxifyImage } from "@/lib/imgProxy";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-type HistoryItem = {
-  id: string;
-  mangaId: string;
-  chapterId: string;
-  mangaTitle: string;
-  mangaCover?: string;
-  chapterTitle?: string;
-  updatedAt?: any;
-};
-
-function formatDate(v: any) {
-  const seconds = v?.seconds;
-  if (!seconds) return "";
-  return new Date(seconds * 1000).toLocaleString("pt-BR");
+function safeString(value: unknown) {
+  return String(value || "").trim();
 }
 
-export default function HistoryPage() {
-  const { user, loading } = useAuth();
-  const [items, setItems] = useState<HistoryItem[]>([]);
-  const [pageLoading, setPageLoading] = useState(true);
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-  useEffect(() => {
-    async function load() {
-      if (!user?.uid) {
-        setPageLoading(false);
-        return;
-      }
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const uid = safeString(searchParams.get("uid"));
 
-      try {
-        const res = await fetch(`/api/history?uid=${encodeURIComponent(user.uid)}`);
-        const data = await res.json();
-        setItems(data?.items || []);
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setPageLoading(false);
-      }
+    if (!uid) {
+      return NextResponse.json({ ok: false, items: [] }, { status: 400 });
     }
 
-    if (!loading) load();
-  }, [user?.uid, loading]);
+    const db = getAdminDb();
 
-  if (loading || pageLoading) {
-    return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center">
-        Carregando leituras recentes...
-      </main>
+    if (!db) {
+      return NextResponse.json(
+        { ok: false, items: [], error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
+    const snap = await db
+      .collection("users")
+      .doc(uid)
+      .collection("history")
+      .orderBy("updatedAt", "desc")
+      .limit(30)
+      .get();
+
+    const items = snap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    }));
+
+    return NextResponse.json({ ok: true, items });
+  } catch (error: unknown) {
+    console.error("GET /api/history error:", error);
+
+    const message =
+      error instanceof Error ? error.message : "Internal error";
+
+    return NextResponse.json(
+      { ok: false, items: [], error: message },
+      { status: 500 }
     );
   }
+}
 
-  if (!user) {
-    return (
-      <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
-        Faça login para ver o que você está lendo.
-      </main>
+export async function POST(req: Request) {
+  try {
+    const body = await req.json().catch(() => null);
+
+    const uid = safeString(body?.uid);
+    const mangaId = safeString(body?.mangaId);
+    const chapterId = safeString(body?.chapterId);
+    const mangaTitle = safeString(body?.mangaTitle);
+    const mangaCover = safeString(body?.mangaCover);
+    const chapterTitle = safeString(body?.chapterTitle);
+    const chapterNumber = safeNumber(body?.chapterNumber, 0);
+
+    if (!uid || !mangaId || !chapterId) {
+      return NextResponse.json(
+        { ok: false, error: "Missing fields" },
+        { status: 400 }
+      );
+    }
+
+    const db = getAdminDb();
+
+    if (!db) {
+      return NextResponse.json(
+        { ok: false, error: "Firebase Admin não configurado." },
+        { status: 500 }
+      );
+    }
+
+    const now = new Date();
+
+    const historyRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("history")
+      .doc(mangaId);
+
+    const progressRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("progress")
+      .doc(mangaId);
+
+    const userRef = db.collection("users").doc(uid);
+
+    const batch = db.batch();
+
+    batch.set(
+      historyRef,
+      {
+        mangaId,
+        chapterId,
+        mangaTitle,
+        mangaCover,
+        chapterTitle,
+        chapterNumber,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    batch.set(
+      progressRef,
+      {
+        mangaId,
+        chapterId,
+        chapterTitle,
+        chapterNumber,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    batch.set(
+      userRef,
+      {
+        lastReadAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    await batch.commit();
+
+    return NextResponse.json({ ok: true });
+  } catch (error: unknown) {
+    console.error("POST /api/history error:", error);
+
+    const message =
+      error instanceof Error ? error.message : "Internal error";
+
+    return NextResponse.json(
+      { ok: false, error: message },
+      { status: 500 }
     );
   }
-
-  return (
-    <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white p-6">
-      <div className="max-w-6xl mx-auto space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-cyan-400">📚 Lendo recentes</h1>
-          <p className="text-zinc-400 text-sm mt-1">
-            Aqui aparecem apenas os capítulos que você abriu recentemente.
-          </p>
-        </div>
-
-        {items.length === 0 ? (
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-300">
-            Você ainda não abriu nenhum capítulo.
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {items.map((item) => {
-              const coverSrc = proxifyImage(item.mangaCover);
-
-              return (
-                <Link
-                  key={item.id}
-                  href={`/manga/${item.mangaId}/chapter/${item.chapterId}`}
-                  className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4 flex gap-4 hover:border-cyan-400 transition"
-                >
-                  {coverSrc ? (
-                    <img
-                      src={coverSrc}
-                      alt={item.mangaTitle}
-                      className="h-24 w-20 object-cover rounded-xl"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="h-24 w-20 rounded-xl flex items-center justify-center bg-zinc-800 text-zinc-400 text-xs">
-                      Sem capa
-                    </div>
-                  )}
-
-                  <div className="min-w-0 flex-1">
-                    <div className="font-semibold line-clamp-1">{item.mangaTitle}</div>
-                    <div className="text-sm text-zinc-400 line-clamp-1">
-                      {item.chapterTitle || "Continuar leitura"}
-                    </div>
-                    <div className="text-xs text-zinc-500 mt-2">
-                      {formatDate(item.updatedAt)}
-                    </div>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </main>
-  );
 }

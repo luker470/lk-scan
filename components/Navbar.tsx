@@ -1,50 +1,95 @@
 "use client";
 
 import Link from "next/link";
+import { useAuth } from "@/context/AuthContext";
+import { isAdmin } from "@/lib/admin";
 
 export default function Navbar() {
+  const { user, loading, signOutUser } = useAuth();
 
   return (
-    <div className="sticky top-0 z-50 bg-zinc-900/60 backdrop-blur-md border-b border-zinc-800">
-
-      <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-
-        {/* LOGO */}
+    <header className="sticky top-0 z-50 border-b border-zinc-800 bg-black/90 backdrop-blur">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4">
         <Link href="/" className="flex items-center gap-3">
           <img
             src="/logo.png"
             alt="LK-Scan"
-            className="h-10 w-auto drop-shadow-[0_0_12px_#00ffff]"
+            className="h-12 w-12 rounded-xl object-cover"
           />
-
-          <span className="text-lg font-bold text-cyan-400 drop-shadow-[0_0_10px_#00ffff]">
-            LK-Scan
-          </span>
+          <div>
+            <div className="text-2xl font-extrabold text-cyan-400">LK-Scan</div>
+            <div className="text-xs text-zinc-400">Mangás e manhwas online</div>
+          </div>
         </Link>
 
-        {/* MENU */}
-        <div className="hidden md:flex gap-6 text-sm text-zinc-200">
+        <nav className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/ranking-users"
+            className="rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+          >
+            Ranking
+          </Link>
 
-          <a className="hover:text-cyan-400 transition" href="/catalog">
-            Catálogo
-          </a>
+          {user ? (
+            <>
+              <Link
+                href="/favorites"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Favoritos
+              </Link>
 
-          <a className="hover:text-cyan-400 transition" href="/latest">
-            Latest
-          </a>
+              <Link
+                href="/following"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Seguindo
+              </Link>
 
-          <a className="hover:text-cyan-400 transition" href="/favorites">
-            Favoritos
-          </a>
+              <Link
+                href="/profile"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Perfil
+              </Link>
 
-          <a className="hover:text-cyan-400 transition" href="/history">
-            Histórico
-          </a>
+              <button
+                onClick={() => signOutUser()}
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-red-400 hover:text-red-300 transition"
+              >
+                Sair
+              </button>
 
-        </div>
+              {isAdmin(user.uid) ? (
+                <Link
+                  href="/admin"
+                  className="rounded-xl bg-cyan-500 px-4 py-2 font-bold text-black hover:bg-cyan-400 transition"
+                >
+                  Admin
+                </Link>
+              ) : null}
+            </>
+          ) : loading ? (
+            <div className="text-sm text-zinc-400">...</div>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Entrar
+              </Link>
 
+              <Link
+                href="/register"
+                className="rounded-xl bg-cyan-500 px-4 py-2 font-bold text-black hover:bg-cyan-400 transition"
+              >
+                Criar conta
+              </Link>
+            </>
+          )}
+        </nav>
       </div>
-
-    </div>
+    </header>
   );
 }

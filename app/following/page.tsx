@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { proxifyImage } from "@/lib/imgProxy";
 
-type FavoriteItem = {
+type FollowingItem = {
   id: string;
   mangaId: string;
   title: string;
@@ -13,9 +13,9 @@ type FavoriteItem = {
   genre?: string;
 };
 
-export default function FavoritesPage() {
+export default function FollowingPage() {
   const { user, loading } = useAuth();
-  const [items, setItems] = useState<FavoriteItem[]>([]);
+  const [items, setItems] = useState<FollowingItem[]>([]);
   const [pageLoading, setPageLoading] = useState(true);
 
   useEffect(() => {
@@ -28,7 +28,7 @@ export default function FavoritesPage() {
       }
 
       try {
-        const res = await fetch(`/api/favorites?uid=${encodeURIComponent(user.uid)}`);
+        const res = await fetch(`/api/following?uid=${encodeURIComponent(user.uid)}`);
         const data = await res.json();
 
         if (!cancelled) {
@@ -56,7 +56,7 @@ export default function FavoritesPage() {
   if (loading || pageLoading) {
     return (
       <main className="min-h-screen bg-black text-white flex items-center justify-center">
-        Carregando favoritos...
+        Carregando mangás seguidos...
       </main>
     );
   }
@@ -64,7 +64,7 @@ export default function FavoritesPage() {
   if (!user) {
     return (
       <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
-        Faça login para acessar seus favoritos.
+        Faça login para acessar suas obras seguidas.
       </main>
     );
   }
@@ -72,11 +72,11 @@ export default function FavoritesPage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white p-6">
       <div className="max-w-6xl mx-auto space-y-6">
-        <h1 className="text-3xl font-bold text-cyan-400">❤️ Seus favoritos</h1>
+        <h1 className="text-3xl font-bold text-cyan-400">🔔 Mangás seguidos</h1>
 
         {items.length === 0 ? (
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-300">
-            Você ainda não favoritou nenhum mangá.
+            Você ainda não está seguindo nenhum mangá.
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-4">

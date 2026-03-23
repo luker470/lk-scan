@@ -1,181 +1,419 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { collection, doc, getDoc, getDocs, orderBy, query } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import {
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+} from "firebase/firestore";
 import ReaderPro from "@/components/ReaderPro";
-import Comments from "@/components/Comments";
+import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
+import { proxifyImage } from "@/lib/imgProxy";
 
-type PageItem = {
-  index: number;
-  url: string;
+type ChapterClientProps = {
+  mangaId: string;
+  chapterId: string;
 };
+
+type ChapterPageInput =
+  | string
+  | {
+      url?: string;
+      src?: string;
+      mirrorUrl?: string;
+      storageUrl?: string;
+    };
+
+type MangaDoc = {
+  title?: string;
+  cover?: string;
+  banner?: string;
+  genre?: string;
+  description?: string;
+  synopsis?: string;
+  views?: number;
+};
+
+type ChapterDoc = {
+  id: string;
+  title?: string;
+  number?: number;
+  slug?: string;
+  sourceUrl?: string;
+  pages?: ChapterPageInput[];
+  images?: ChapterPageInput[];
+  pagesCount?: number;
+  pageCount?: number;
+  createdAt?: any;
+  updatedAt?: any;
+};
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function buildChapterTitle(chapter: ChapterDoc | null) {
+  if (!chapter) return "Capítulo";
+
+  if (chapter.title?.trim()) return chapter.title.trim();
+
+  const n = safeNumber(chapter.number, NaN);
+  if (Number.isFinite(n)) return `Capítulo ${n}`;
+
+  return "Capítulo";
+}
+
+function resolvePages(chapter: ChapterDoc | null): ChapterPageInput[] {
+  if (!chapter) return [];
+
+  if (Array.isArray(chapter.pages) && chapter.pages.length > 0) {
+    return chapter.pages;
+  }
+
+  if (Array.isArray(chapter.images) && chapter.images.length > 0) {
+    return chapter.images;
+  }
+
+  return [];
+}
+
+function getChapterPagesCount(chapter: ChapterDoc | null) {
+  if (!chapter) return 0;
+  return safeNumber(chapter.pagesCount ?? chapter.pageCount ?? resolvePages(chapter).length, 0);
+}
 
 export default function ChapterClient({
   mangaId,
   chapterId,
-}: {
-  mangaId: string;
-  chapterId: string;
-}) {
-  const router = useRouter();
+}: ChapterClientProps) {
   const { user } = useAuth();
 
-  const [title, setTitle] = useState<string>("");
-  const [pages, setPages] = useState<PageItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const [prevId, setPrevId] = useState<string | null>(null);
-  const [nextId, setNextId] = useState<string | null>(null);
+  const [manga, setManga] = useState<MangaDoc | null>(null);
+  const [chapter, setChapter] = useState<ChapterDoc | null>(null);
+  const [allChapters, setAllChapters] = useState<ChapterDoc[]>([]);
 
-  const [mangaTitle, setMangaTitle] = useState("");
-  const [mangaCover, setMangaCover] = useState("");
+  const chapterTitle = useMemo(() => buildChapterTitle(chapter), [chapter]);
+  const pages = useMemo(() => resolvePages(chapter), [chapter]);
 
-  const countedRef = useRef(false);
-  const historyRef = useRef(false);
+  const orderedChapters = useMemo(() => {
+    return [...allChapters].sort((a, b) => {
+      const an = safeNumber(a.number, 0);
+      const bn = safeNumber(b.number, 0);
+
+      if (an !== bn) return an - bn;
+
+      return String(a.id).localeCompare(String(b.id));
+    });
+  }, [allChapters]);
+
+  const currentIndex = useMemo(() => {
+    return orderedChapters.findIndex((item) => item.id === chapterId);
+  }, [orderedChapters, chapterId]);
+
+  const prevChapter =
+    currentIndex > 0 ? orderedChapters[currentIndex - 1] : null;
+
+  const nextChapter =
+    currentIndex >= 0 && currentIndex < orderedChapters.length - 1
+      ? orderedChapters[currentIndex + 1]
+      : null;
 
   useEffect(() => {
-    async function run() {
+    let cancelled = false;
+
+    async function load() {
+      if (!db) {
+        setError("Firebase não inicializado.");
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
+      setError("");
 
       try {
         const mangaRef = doc(db, "mangas", mangaId);
-        const mangaSnap = await getDoc(mangaRef);
+        const chapterRef = doc(db, "mangas", mangaId, "chapters", chapterId);
 
-        if (mangaSnap.exists()) {
-          const mangaData = mangaSnap.data() as any;
-          setMangaTitle(mangaData.title || "");
-          setMangaCover(mangaData.cover || "");
+        const [mangaSnap, chapterSnap, chaptersSnap] = await Promise.all([
+          getDoc(mangaRef),
+          getDoc(chapterRef),
+          getDocs(
+            query(
+              collection(db, "mangas", mangaId, "chapters"),
+              orderBy("number", "asc")
+            )
+          ).catch(async () => {
+            return getDocs(collection(db, "mangas", mangaId, "chapters"));
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        if (!mangaSnap.exists()) {
+          setError("Mangá não encontrado.");
+          setLoading(false);
+          return;
         }
 
-        const chapRef = doc(db, "mangas", mangaId, "chapters", chapterId);
-        const snap = await getDoc(chapRef);
-
-        if (snap.exists()) {
-          const data = snap.data() as any;
-          setTitle(data.title || `Capítulo ${data.number ?? chapterId}`);
-
-          const list = (data.pages || []) as PageItem[];
-          setPages(list.slice().sort((a, b) => a.index - b.index));
-        } else {
-          setTitle("Capítulo não encontrado");
-          setPages([]);
+        if (!chapterSnap.exists()) {
+          setError("Capítulo não encontrado.");
+          setLoading(false);
+          return;
         }
 
-        const qAll = query(
-          collection(db, "mangas", mangaId, "chapters"),
-          orderBy("number", "asc")
-        );
-        const all = await getDocs(qAll);
-        const ids = all.docs.map((d) => d.id);
-        const idx = ids.indexOf(chapterId);
+        const mangaData = mangaSnap.data() as MangaDoc;
 
-        setPrevId(idx > 0 ? ids[idx - 1] : null);
-        setNextId(idx >= 0 && idx < ids.length - 1 ? ids[idx + 1] : null);
-      } catch (e) {
-        console.error("Erro ao carregar capítulo:", e);
+        const chapterData = {
+          id: chapterSnap.id,
+          ...(chapterSnap.data() as Omit<ChapterDoc, "id">),
+        };
+
+        const chaptersData = chaptersSnap.docs.map((item) => ({
+          id: item.id,
+          ...(item.data() as Omit<ChapterDoc, "id">),
+        }));
+
+        setManga(mangaData);
+        setChapter(chapterData);
+        setAllChapters(chaptersData);
+      } catch (err) {
+        console.error(err);
+        if (!cancelled) {
+          setError("Erro ao carregar capítulo.");
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
-    if (mangaId && chapterId) run();
+    load();
+
+    return () => {
+      cancelled = true;
+    };
   }, [mangaId, chapterId]);
 
   useEffect(() => {
-    if (!mangaId || !chapterId) return;
-    if (countedRef.current) return;
+    let cancelled = false;
 
-    countedRef.current = true;
+    async function registerViewAndHistory() {
+      if (!mangaId || !chapterId || !chapter || !manga) return;
 
-    fetch("/api/views", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        mangaId,
-        chapterId,
-        uid: user?.uid || "",
-      }),
-    }).catch(() => {});
-  }, [mangaId, chapterId, user?.uid]);
+      try {
+        await fetch("/api/views", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            mangaId,
+            chapterId,
+            uid: user?.uid || "",
+          }),
+        });
 
-  useEffect(() => {
-    if (!user?.uid || !mangaId || !chapterId || !title) return;
-    if (historyRef.current) return;
+        if (user?.uid) {
+          await fetch("/api/history", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              uid: user.uid,
+              mangaId,
+              chapterId,
+              mangaTitle: manga.title || "",
+              mangaCover: manga.cover || "",
+              chapterTitle,
+              chapterNumber: safeNumber(chapter.number, 0),
+            }),
+          });
+        }
+      } catch (err) {
+        if (!cancelled) {
+          console.error("Erro ao registrar leitura:", err);
+        }
+      }
+    }
 
-    historyRef.current = true;
+    if (!loading && !error && chapter && manga) {
+      registerViewAndHistory();
+    }
 
-    fetch("/api/history", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        uid: user.uid,
-        mangaId,
-        chapterId,
-        mangaTitle,
-        mangaCover,
-        chapterTitle: title,
-      }),
-    }).catch(() => {});
-  }, [user?.uid, mangaId, chapterId, title, mangaTitle, mangaCover]);
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, error, chapter, manga, mangaId, chapterId, chapterTitle, user?.uid]);
 
-  const pageUrls = useMemo(() => pages.map((p) => p.url), [pages]);
+  const bannerSrc = proxifyImage(manga?.banner || manga?.cover);
+  const pagesCount = getChapterPagesCount(chapter);
+  const descriptionText = manga?.description?.trim() || manga?.synopsis?.trim() || "";
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-black text-white flex items-center justify-center">
-        Carregando capítulo...
-      </div>
+      <main className="min-h-screen bg-black text-white">
+        <div className="mx-auto max-w-6xl px-4 py-8">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-6 text-zinc-300">
+            Carregando capítulo...
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (error || !chapter || !manga) {
+    return (
+      <main className="min-h-screen bg-black text-white">
+        <div className="mx-auto max-w-6xl px-4 py-8 space-y-4">
+          <div className="rounded-2xl border border-red-800 bg-red-500/10 p-6 text-red-300">
+            {error || "Não foi possível carregar o capítulo."}
+          </div>
+
+          <Link
+            href={mangaId ? `/manga/${mangaId}` : "/"}
+            className="inline-flex rounded-xl border border-zinc-700 px-4 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+          >
+            Voltar
+          </Link>
+        </div>
+      </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-black text-white p-4">
-      <div className="max-w-4xl mx-auto flex flex-col gap-4">
-        <div className="sticky top-0 z-20 flex items-center justify-between rounded-2xl border border-zinc-800 bg-black/70 p-3 backdrop-blur">
-          <button
-            onClick={() => router.back()}
-            className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400 hover:text-cyan-300 transition"
-          >
-            ← Voltar
-          </button>
+    <main className="min-h-screen bg-black text-white">
+      <div className="mx-auto max-w-6xl px-3 py-4 md:px-4 md:py-6 space-y-5">
+        <section className="rounded-3xl overflow-hidden border border-zinc-800 bg-zinc-900/50">
+          {bannerSrc ? (
+            <div className="relative h-36 md:h-52 w-full overflow-hidden">
+              <img
+                src={bannerSrc}
+                alt={manga.title || "Mangá"}
+                className="h-full w-full object-cover opacity-40"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+            </div>
+          ) : null}
 
-          <div className="text-sm text-zinc-300 truncate px-2">{title}</div>
-          <div className="text-sm text-zinc-400">{pages.length}p</div>
-        </div>
+          <div className="p-4 md:p-6 space-y-4">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-2">
+                <Link
+                  href={`/manga/${mangaId}`}
+                  className="inline-flex text-sm text-cyan-300 hover:text-cyan-200 transition"
+                >
+                  ← Voltar para a obra
+                </Link>
 
-        <div className="flex gap-2">
-          <button
-            disabled={!prevId}
-            onClick={() => prevId && router.push(`/manga/${mangaId}/chapter/${prevId}`)}
-            className="flex-1 px-4 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition disabled:opacity-40"
-          >
-            ◀︎ Capítulo anterior
-          </button>
+                <h1 className="text-xl md:text-3xl font-extrabold text-cyan-400">
+                  {manga.title || "Mangá"}
+                </h1>
 
-          <button
-            disabled={!nextId}
-            onClick={() => nextId && router.push(`/manga/${mangaId}/chapter/${nextId}`)}
-            className="flex-1 px-4 py-3 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition disabled:opacity-40"
-          >
-            Próximo capítulo ▶︎
-          </button>
-        </div>
+                <div className="text-sm md:text-base text-zinc-300">
+                  {chapterTitle}
+                </div>
 
-        {pageUrls.length === 0 ? (
-          <div className="text-zinc-300 bg-zinc-900/50 border border-zinc-800 rounded-2xl p-4">
-            Esse capítulo ainda não tem páginas.
+                <div className="flex flex-wrap gap-2 text-xs text-zinc-400">
+                  <span className="rounded-full border border-zinc-700 px-3 py-1">
+                    {pagesCount} páginas
+                  </span>
+
+                  {typeof chapter.number !== "undefined" ? (
+                    <span className="rounded-full border border-zinc-700 px-3 py-1">
+                      Cap. {chapter.number}
+                    </span>
+                  ) : null}
+
+                  {manga.genre ? (
+                    <span className="rounded-full border border-zinc-700 px-3 py-1">
+                      {manga.genre}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {prevChapter ? (
+                  <Link
+                    href={`/manga/${mangaId}/chapter/${prevChapter.id}`}
+                    className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                  >
+                    ◀ Capítulo anterior
+                  </Link>
+                ) : null}
+
+                {nextChapter ? (
+                  <Link
+                    href={`/manga/${mangaId}/chapter/${nextChapter.id}`}
+                    className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-bold text-black hover:bg-cyan-400 transition"
+                  >
+                    Próximo capítulo ▶
+                  </Link>
+                ) : null}
+              </div>
+            </div>
+
+            {descriptionText ? (
+              <div className="rounded-2xl border border-zinc-800 bg-black/30 p-4 text-sm text-zinc-300 leading-6">
+                {descriptionText}
+              </div>
+            ) : null}
           </div>
-        ) : (
-          <ReaderPro
-            pages={pageUrls}
-            storageKey={`manga:${mangaId}:chapter:${chapterId}`}
-          />
-        )}
+        </section>
 
-        <Comments mangaId={mangaId} chapterId={chapterId} />
+        <section className="rounded-3xl border border-zinc-800 bg-zinc-900/40 p-3 md:p-4">
+          <ReaderPro
+            pages={pages}
+            storageKey={`lk-reader:${mangaId}:${chapterId}`}
+          />
+        </section>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="text-sm text-zinc-400">
+              Navegação rápida entre capítulos
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href={`/manga/${mangaId}`}
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Ver obra
+              </Link>
+
+              {prevChapter ? (
+                <Link
+                  href={`/manga/${mangaId}/chapter/${prevChapter.id}`}
+                  className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-semibold text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
+                >
+                  ◀ Anterior
+                </Link>
+              ) : null}
+
+              {nextChapter ? (
+                <Link
+                  href={`/manga/${mangaId}/chapter/${nextChapter.id}`}
+                  className="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-bold text-black hover:bg-cyan-400 transition"
+                >
+                  Próximo ▶
+                </Link>
+              ) : null}
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   );

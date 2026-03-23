@@ -5,6 +5,7 @@ import {
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -41,6 +42,8 @@ type AuthContextType = {
   register: (params: RegisterParams) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
   logout: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  signOutUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -50,6 +53,8 @@ const AuthContext = createContext<AuthContextType>({
   register: async () => {},
   loginWithGoogle: async () => {},
   logout: async () => {},
+  resetPassword: async () => {},
+  signOutUser: async () => {},
 });
 
 function normalizeUsername(username: string) {
@@ -118,11 +123,16 @@ async function ensureUserDoc(
       chaptersRead: 0,
       commentsCount: 0,
       favoritesCount: 0,
+      followingCount: 0,
       rankScore: 0,
       title: isAdmin(user.uid) ? "Admin" : getTitleByLevel(levelData.level),
       isVip: false,
       vipTier: null,
       role: isAdmin(user.uid) ? "admin" : "user",
+      preferredLanguage: "pt-BR",
+      preferredReaderMode: "fitWidth",
+      theme: "dark",
+      favoriteGenres: [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       lastReadAt: null,
@@ -143,6 +153,12 @@ async function ensureUserDoc(
       title: isAdmin(user.uid)
         ? "Admin"
         : data?.title || getTitleByLevel(data?.level || 1),
+      preferredLanguage: data?.preferredLanguage || "pt-BR",
+      preferredReaderMode: data?.preferredReaderMode || "fitWidth",
+      theme: data?.theme || "dark",
+      favoriteGenres: Array.isArray(data?.favoriteGenres)
+        ? data.favoriteGenres
+        : [],
     },
     { merge: true }
   );
@@ -153,9 +169,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u ?? null);
-      setLoading(false);
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      try {
+        if (u) {
+          await ensureUserDoc(u);
+        }
+        setUser(u ?? null);
+      } catch (error) {
+        console.error("Erro ao sincronizar usuário:", error);
+        setUser(u ?? null);
+      } finally {
+        setLoading(false);
+      }
     });
 
     return () => unsub();
@@ -204,9 +229,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await signOut(auth);
   }
 
+  async function resetPassword(email: string) {
+    await sendPasswordResetEmail(auth, email.trim());
+  }
+
+  async function signOutUser() {
+    await logout();
+  }
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, register, loginWithGoogle, logout }}
+      value={{
+        user,
+        loading,
+        login,
+        register,
+        loginWithGoogle,
+        logout,
+        resetPassword,
+        signOutUser,
+      }}
     >
       {children}
     </AuthContext.Provider>

@@ -6,13 +6,14 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 
 export default function LoginPage() {
-  const { login, loginWithGoogle } = useAuth();
+  const { login, loginWithGoogle, resetPassword } = useAuth();
   const router = useRouter();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loadingEmail, setLoadingEmail] = useState(false);
   const [loadingGoogle, setLoadingGoogle] = useState(false);
+  const [loadingReset, setLoadingReset] = useState(false);
 
   async function handleEmailLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -38,6 +39,24 @@ export default function LoginPage() {
       alert(e?.message || "Erro ao entrar com Google.");
     } finally {
       setLoadingGoogle(false);
+    }
+  }
+
+  async function handleResetPassword() {
+    if (!email.trim()) {
+      alert("Digite seu email primeiro.");
+      return;
+    }
+
+    setLoadingReset(true);
+
+    try {
+      await resetPassword(email.trim());
+      alert("Email de recuperação enviado.");
+    } catch (e: any) {
+      alert(e?.message || "Erro ao enviar recuperação.");
+    } finally {
+      setLoadingReset(false);
     }
   }
 
@@ -78,6 +97,14 @@ export default function LoginPage() {
           className="w-full rounded-xl border border-zinc-700 p-3 font-semibold text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 disabled:opacity-50"
         >
           {loadingGoogle ? "Conectando..." : "Entrar com Google"}
+        </button>
+
+        <button
+          onClick={handleResetPassword}
+          disabled={loadingReset}
+          className="w-full rounded-xl border border-zinc-700 p-3 text-sm font-semibold text-zinc-300 hover:border-yellow-400 hover:text-yellow-300 disabled:opacity-50"
+        >
+          {loadingReset ? "Enviando..." : "Esqueci minha senha"}
         </button>
 
         <p className="text-sm text-zinc-400">

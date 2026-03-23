@@ -14,13 +14,16 @@ import {
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import FavoriteButton from "@/components/FavoriteButton";
+import FollowButton from "@/components/FollowButton";
 import { useAuth } from "@/context/AuthContext";
 
 type Chapter = {
   id: string;
-  number: number;
+  number?: number;
   title?: string;
+  slug?: string;
   pagesCount?: number;
+  pageCount?: number;
   views?: number;
   updatedAt?: any;
   createdAt?: any;
@@ -33,6 +36,7 @@ type Manga = {
   banner?: string;
   genre?: string;
   description?: string;
+  synopsis?: string;
   status?: string;
   author?: string;
   artist?: string;
@@ -50,19 +54,24 @@ type HistoryItem = {
   id: string;
   mangaId: string;
   chapterId: string;
-  mangaTitle: string;
+  mangaTitle?: string;
   chapterTitle?: string;
   updatedAt?: any;
 };
 
 function formatDate(v: any) {
-  const seconds = v?.seconds;
+  const seconds = v?.seconds || v?._seconds;
   if (!seconds) return "Sem data";
   return new Date(seconds * 1000).toLocaleString("pt-BR");
 }
 
 function pad3(n: number) {
   return String(n).padStart(3, "0");
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function formatStatus(status?: string) {
@@ -84,6 +93,29 @@ function splitGenres(value?: string) {
     .filter(Boolean);
 }
 
+function buildChapterLabel(chapter: Chapter) {
+  if (chapter.title?.trim()) return chapter.title.trim();
+
+  const number = safeNumber(chapter.number, NaN);
+  if (Number.isFinite(number)) return `Capítulo ${pad3(number)}`;
+
+  return "Capítulo";
+}
+
+function getChapterPagesCount(chapter: Chapter) {
+  return safeNumber(chapter.pagesCount ?? chapter.pageCount ?? 0, 0);
+}
+
+function normalizeChapters(list: Chapter[]) {
+  return [...list].sort((a, b) => {
+    const an = safeNumber(a.number, -1);
+    const bn = safeNumber(b.number, -1);
+
+    if (an !== bn) return an - bn;
+    return String(a.id).localeCompare(String(b.id));
+  });
+}
+
 export default function MangaClient({ id }: { id: string }) {
   const { user } = useAuth();
 
@@ -95,14 +127,18 @@ export default function MangaClient({ id }: { id: string }) {
   const [lastReadChapterId, setLastReadChapterId] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function run() {
       setLoading(true);
 
       try {
         if (!db) {
-          setManga(null);
-          setChapters([]);
-          setRelated([]);
+          if (!cancelled) {
+            setManga(null);
+            setChapters([]);
+            setRelated([]);
+          }
           return;
         }
 
@@ -110,9 +146,11 @@ export default function MangaClient({ id }: { id: string }) {
         const snap = await getDoc(ref);
 
         if (!snap.exists()) {
-          setManga(null);
-          setChapters([]);
-          setRelated([]);
+          if (!cancelled) {
+            setManga(null);
+            setChapters([]);
+            setRelated([]);
+          }
           return;
         }
 
@@ -121,21 +159,30 @@ export default function MangaClient({ id }: { id: string }) {
           ...(snap.data() as Omit<Manga, "id">),
         };
 
-        setManga(mangaData);
+        if (!cancelled) {
+          setManga(mangaData);
+        }
 
-        const chaptersQ = query(
-          collection(db, "mangas", id, "chapters"),
-          orderBy("number", "desc")
-        );
-
-        const chaptersSnap = await getDocs(chaptersQ);
+        let chaptersSnap;
+        try {
+          chaptersSnap = await getDocs(
+            query(
+              collection(db, "mangas", id, "chapters"),
+              orderBy("number", "desc")
+            )
+          );
+        } catch {
+          chaptersSnap = await getDocs(collection(db, "mangas", id, "chapters"));
+        }
 
         const chapterList = chaptersSnap.docs.map((d) => ({
           id: d.id,
           ...(d.data() as Omit<Chapter, "id">),
         })) as Chapter[];
 
-        setChapters(chapterList);
+        if (!cancelled) {
+          setChapters(chapterList);
+        }
 
         if (mangaData.genre) {
           try {
@@ -167,28 +214,44 @@ export default function MangaClient({ id }: { id: string }) {
               .slice(0, 6)
               .map(({ _score, ...rest }) => rest);
 
-            setRelated(relatedList);
+            if (!cancelled) {
+              setRelated(relatedList);
+            }
           } catch (e) {
             console.error("Erro ao carregar relacionados:", e);
-            setRelated([]);
+            if (!cancelled) {
+              setRelated([]);
+            }
           }
         } else {
-          setRelated([]);
+          if (!cancelled) {
+            setRelated([]);
+          }
         }
       } catch (e) {
         console.error("Erro ao carregar mangá:", e);
-        setManga(null);
-        setChapters([]);
-        setRelated([]);
+        if (!cancelled) {
+          setManga(null);
+          setChapters([]);
+          setRelated([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
     if (id) run();
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function loadHistory() {
       if (!user?.uid || !id) {
         setLastReadChapterId(null);
@@ -202,40 +265,56 @@ export default function MangaClient({ id }: { id: string }) {
         const items = (data?.items || []) as HistoryItem[];
         const match = items.find((item) => item.mangaId === id);
 
-        setLastReadChapterId(match?.chapterId || null);
+        if (!cancelled) {
+          setLastReadChapterId(match?.chapterId || null);
+        }
       } catch (e) {
         console.error("Erro ao carregar histórico:", e);
-        setLastReadChapterId(null);
+        if (!cancelled) {
+          setLastReadChapterId(null);
+        }
       }
     }
 
     loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user?.uid, id]);
 
+  const normalizedChapters = useMemo(() => normalizeChapters(chapters), [chapters]);
+
   const latestChapter = useMemo(() => {
-    if (!chapters.length) return null;
-    return [...chapters].sort((a, b) => Number(b.number || 0) - Number(a.number || 0))[0];
-  }, [chapters]);
+    if (!normalizedChapters.length) return null;
+    return normalizedChapters[normalizedChapters.length - 1];
+  }, [normalizedChapters]);
 
   const firstChapter = useMemo(() => {
-    if (!chapters.length) return null;
-    return [...chapters].sort((a, b) => Number(a.number || 0) - Number(b.number || 0))[0];
-  }, [chapters]);
+    if (!normalizedChapters.length) return null;
+    return normalizedChapters[0];
+  }, [normalizedChapters]);
 
   const displayedChapters = useMemo(() => {
-    const list = [...chapters];
-    list.sort((a, b) => {
-      const an = Number(a.number || 0);
-      const bn = Number(b.number || 0);
-      return sortDesc ? bn - an : an - bn;
-    });
-    return list;
-  }, [chapters, sortDesc]);
+    const list = [...normalizedChapters];
+    return sortDesc ? list.reverse() : list;
+  }, [normalizedChapters, sortDesc]);
 
   const continueChapter = useMemo(() => {
     if (!lastReadChapterId) return null;
     return chapters.find((c) => c.id === lastReadChapterId) || null;
   }, [lastReadChapterId, chapters]);
+
+  const chaptersCount =
+    typeof manga?.chaptersCount === "number" ? manga.chaptersCount : chapters.length;
+
+  const descriptionText =
+    manga?.description?.trim() ||
+    manga?.synopsis?.trim() ||
+    "Sem descrição ainda. Adicione uma descrição no painel admin para deixar a página mais completa.";
+
+  const coverSrc = proxifyImage(manga?.cover);
+  const bannerSrc = proxifyImage(manga?.banner || manga?.cover);
 
   if (loading) {
     return (
@@ -261,12 +340,6 @@ export default function MangaClient({ id }: { id: string }) {
       </main>
     );
   }
-
-  const chaptersCount =
-    typeof manga.chaptersCount === "number" ? manga.chaptersCount : chapters.length;
-
-  const coverSrc = proxifyImage(manga.cover);
-  const bannerSrc = proxifyImage(manga.banner || manga.cover);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-zinc-950 to-black text-white">
@@ -312,7 +385,7 @@ export default function MangaClient({ id }: { id: string }) {
 
                     {latestChapter?.number ? (
                       <span className="px-3 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs font-semibold">
-                        Último cap. {pad3(latestChapter.number)}
+                        Último cap. {pad3(safeNumber(latestChapter.number, 0))}
                       </span>
                     ) : null}
 
@@ -343,12 +416,10 @@ export default function MangaClient({ id }: { id: string }) {
                 </div>
 
                 <div className="rounded-2xl border border-zinc-800 bg-black/30 p-4 text-zinc-300 leading-relaxed whitespace-pre-wrap">
-                  {manga.description?.trim()
-                    ? manga.description
-                    : "Sem descrição ainda. Adicione uma descrição no painel admin para deixar a página mais completa."}
+                  {descriptionText}
                 </div>
 
-                <div className="flex flex-col md:flex-row gap-3">
+                <div className="flex flex-col md:flex-row gap-3 flex-wrap">
                   {continueChapter ? (
                     <Link
                       href={`/manga/${manga.id}/chapter/${continueChapter.id}`}
@@ -379,6 +450,13 @@ export default function MangaClient({ id }: { id: string }) {
                   ) : null}
 
                   <FavoriteButton
+                    mangaId={manga.id}
+                    title={manga.title}
+                    cover={manga.cover}
+                    genre={manga.genre}
+                  />
+
+                  <FollowButton
                     mangaId={manga.id}
                     title={manga.title}
                     cover={manga.cover}
@@ -424,6 +502,7 @@ export default function MangaClient({ id }: { id: string }) {
 
               {displayedChapters.map((c) => {
                 const isContinue = continueChapter?.id === c.id;
+                const chapterNumber = safeNumber(c.number, 0);
 
                 return (
                   <Link
@@ -438,8 +517,14 @@ export default function MangaClient({ id }: { id: string }) {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <div className="font-semibold">
-                          {c.title || `Capítulo ${pad3(c.number || 0)}`}
+                          {buildChapterLabel(c)}
                         </div>
+
+                        {Number.isFinite(chapterNumber) && chapterNumber > 0 ? (
+                          <span className="px-2 py-1 rounded-full bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-300 font-semibold">
+                            #{pad3(chapterNumber)}
+                          </span>
+                        ) : null}
 
                         {isContinue && (
                           <span className="px-2 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px] font-semibold">
@@ -449,7 +534,7 @@ export default function MangaClient({ id }: { id: string }) {
                       </div>
 
                       <div className="text-xs text-zinc-500 mt-1 flex flex-wrap gap-3">
-                        <span>{c.pagesCount || 0} páginas</span>
+                        <span>{getChapterPagesCount(c)} páginas</span>
                         <span>{(c.views ?? 0).toLocaleString()} views</span>
                         <span>{formatDate(c.updatedAt || c.createdAt)}</span>
                       </div>
@@ -511,6 +596,20 @@ export default function MangaClient({ id }: { id: string }) {
                 </div>
 
                 <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Views do dia</div>
+                  <div className="text-zinc-200 font-semibold">
+                    {(manga.dayViews ?? 0).toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-zinc-500">Views do mês</div>
+                  <div className="text-zinc-200 font-semibold">
+                    {(manga.monthViews ?? 0).toLocaleString()}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
                   <div className="text-zinc-500">Última atualização</div>
                   <div className="text-zinc-200 font-semibold">
                     {formatDate(manga.updatedAt || manga.createdAt)}
@@ -539,6 +638,15 @@ export default function MangaClient({ id }: { id: string }) {
                       Ler do início
                     </Link>
                   )}
+
+                  {continueChapter && (
+                    <Link
+                      href={`/manga/${manga.id}/chapter/${continueChapter.id}`}
+                      className="block w-full rounded-xl border border-cyan-500/40 bg-cyan-500/5 p-3 text-center text-cyan-300 hover:border-cyan-400 transition"
+                    >
+                      Continuar de onde parou
+                    </Link>
+                  )}
                 </div>
               </div>
             )}
@@ -549,7 +657,7 @@ export default function MangaClient({ id }: { id: string }) {
 
                 <div className="space-y-3">
                   {related.map((item) => {
-                    const img = proxifyImage(item.cover);
+                    const relatedCoverSrc = proxifyImage(item.cover) || "/logo.png";
 
                     return (
                       <Link
@@ -557,19 +665,15 @@ export default function MangaClient({ id }: { id: string }) {
                         href={`/manga/${item.id}`}
                         className="flex items-center gap-3 rounded-xl border border-zinc-800 bg-black/20 p-3 hover:border-cyan-400 transition"
                       >
-                        {img ? (
-                          <img
-                            src={img}
-                            alt={item.title}
-                            className="h-16 w-12 rounded object-cover shrink-0"
-                          />
-                        ) : (
-                          <div className="h-16 w-12 rounded bg-zinc-800 shrink-0" />
-                        )}
+                        <img
+                          src={relatedCoverSrc}
+                          alt={item.title}
+                          className="h-16 w-12 rounded object-cover shrink-0"
+                        />
 
                         <div className="min-w-0">
                           <div className="font-semibold line-clamp-1">{item.title}</div>
-                          <div className="text-xs text-zinc-500 line-clamp-1">
+                          <div className="text-xs text-zinc-400 line-clamp-1">
                             {item.genre || "Sem gênero"}
                           </div>
                         </div>

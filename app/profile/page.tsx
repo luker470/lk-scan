@@ -2,7 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { doc, getDoc, serverTimestamp, setDoc, collection, getDocs, orderBy, query, limit } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  serverTimestamp,
+  setDoc,
+  collection,
+  getDocs,
+  orderBy,
+  query,
+  limit,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { getLevelFromXp } from "@/lib/levels";
@@ -25,6 +35,9 @@ type UserProfile = {
   chaptersRead?: number;
   favoritesCount?: number;
   commentsCount?: number;
+  preferredLanguage?: string;
+  preferredReaderMode?: "fitWidth" | "fitHeight" | "paged";
+  theme?: "dark" | "light" | "system";
   createdAt?: any;
 };
 
@@ -57,6 +70,11 @@ export default function ProfilePage() {
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
   const [photoURL, setPhotoURL] = useState("");
+  const [preferredLanguage, setPreferredLanguage] = useState("pt-BR");
+  const [preferredReaderMode, setPreferredReaderMode] = useState<
+    "fitWidth" | "fitHeight" | "paged"
+  >("fitWidth");
+  const [theme, setTheme] = useState<"dark" | "light" | "system">("dark");
   const [pageLoading, setPageLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -79,6 +97,9 @@ export default function ProfilePage() {
           setDisplayName(userData.displayName || "");
           setBio(userData.bio || "");
           setPhotoURL(userData.photoURL || "");
+          setPreferredLanguage(userData.preferredLanguage || "pt-BR");
+          setPreferredReaderMode(userData.preferredReaderMode || "fitWidth");
+          setTheme(userData.theme || "dark");
         }
 
         const historySnap = await getDocs(
@@ -132,6 +153,9 @@ export default function ProfilePage() {
           displayName: displayName.trim(),
           bio: bio.trim(),
           photoURL: photoURL.trim(),
+          preferredLanguage: preferredLanguage.trim(),
+          preferredReaderMode,
+          theme,
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -142,6 +166,9 @@ export default function ProfilePage() {
         displayName: displayName.trim(),
         bio: bio.trim(),
         photoURL: photoURL.trim(),
+        preferredLanguage: preferredLanguage.trim(),
+        preferredReaderMode,
+        theme,
       }));
 
       alert("Perfil atualizado.");
@@ -301,6 +328,52 @@ export default function ProfilePage() {
                     placeholder="https://exemplo.com/avatar.png"
                     className="w-full rounded-xl bg-zinc-800 border border-zinc-700 p-3 outline-none focus:border-cyan-400"
                   />
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Idioma preferido</div>
+                  <select
+                    value={preferredLanguage}
+                    onChange={(e) => setPreferredLanguage(e.target.value)}
+                    className="w-full rounded-xl bg-zinc-800 border border-zinc-700 p-3 outline-none focus:border-cyan-400"
+                  >
+                    <option value="pt-BR">Português (Brasil)</option>
+                    <option value="en">English</option>
+                    <option value="es">Español</option>
+                    <option value="ja">日本語</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Modo do leitor</div>
+                  <select
+                    value={preferredReaderMode}
+                    onChange={(e) =>
+                      setPreferredReaderMode(
+                        e.target.value as "fitWidth" | "fitHeight" | "paged"
+                      )
+                    }
+                    className="w-full rounded-xl bg-zinc-800 border border-zinc-700 p-3 outline-none focus:border-cyan-400"
+                  >
+                    <option value="fitWidth">Ajustar largura</option>
+                    <option value="fitHeight">Ajustar altura</option>
+                    <option value="paged">Paginado</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <div className="text-sm text-zinc-300">Tema</div>
+                  <select
+                    value={theme}
+                    onChange={(e) =>
+                      setTheme(e.target.value as "dark" | "light" | "system")
+                    }
+                    className="w-full rounded-xl bg-zinc-800 border border-zinc-700 p-3 outline-none focus:border-cyan-400"
+                  >
+                    <option value="dark">Escuro</option>
+                    <option value="light">Claro</option>
+                    <option value="system">Sistema</option>
+                  </select>
                 </label>
 
                 <button

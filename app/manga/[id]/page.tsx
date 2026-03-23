@@ -33,13 +33,19 @@ export async function generateMetadata({
     const manga = snap.data() as {
       title?: string;
       description?: string;
+      synopsis?: string;
       cover?: string;
       banner?: string;
+      genre?: string;
+      status?: string;
     };
 
     const title = manga.title || "Mangá";
     const description =
-      manga.description || `Leia ${title} online no LK-Scan.`;
+      manga.description?.trim() ||
+      manga.synopsis?.trim() ||
+      `Leia ${title} online no LK-Scan.`;
+
     const image = manga.banner || manga.cover || "/logo.png";
 
     return {
@@ -67,5 +73,6 @@ export async function generateMetadata({
 
 export default async function MangaPage({ params }: PageProps) {
   const { id } = await params;
+
   return <MangaClient id={id} />;
 }

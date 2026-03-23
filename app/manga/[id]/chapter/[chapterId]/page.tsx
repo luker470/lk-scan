@@ -42,6 +42,8 @@ export async function generateMetadata({
     const manga = mangaSnap.data() as {
       title?: string;
       cover?: string;
+      banner?: string;
+      description?: string;
     };
 
     const chapter = chapterSnap.data() as {
@@ -54,8 +56,11 @@ export async function generateMetadata({
       chapter.title || `Capítulo ${chapter.number ?? chapterId}`;
     const title = `${mangaTitle} - ${chapterTitle}`;
 
-    const description = `Leia ${chapterTitle} de ${mangaTitle} online no LK-Scan.`;
-    const image = manga.cover || "/logo.png";
+    const description =
+      manga.description?.trim() ||
+      `Leia ${chapterTitle} de ${mangaTitle} online no LK-Scan.`;
+
+    const image = manga.banner || manga.cover || "/logo.png";
 
     return {
       title,

@@ -7,44 +7,63 @@ type SourceCheckResult = {
   ok: boolean;
   statusCode?: number;
   error?: string;
+  latencyMs?: number;
 };
 
+function safeHostname(url: string) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return await Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error("Timeout ao acessar fonte.")), ms)
+    ),
+  ]);
+}
+
 async function checkUrl(url: string): Promise<SourceCheckResult> {
+  const startedAt = Date.now();
+
   try {
     const origin = new URL(url).origin;
 
-    const res = await fetch(url, {
-      method: "GET",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        Referer: origin,
-        Origin: origin,
-      },
-      cache: "no-store",
-    });
+    const res = await withTimeout(
+      fetch(url, {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          Referer: origin,
+          Origin: origin,
+        },
+        cache: "no-store",
+      }),
+      12000
+    );
 
     return {
       url,
-      host: new URL(url).hostname,
+      host: safeHostname(url),
       ok: res.ok,
       statusCode: res.status,
       error: res.ok ? "" : `HTTP ${res.status}`,
+      latencyMs: Date.now() - startedAt,
     };
   } catch (error: unknown) {
     return {
       url,
-      host: (() => {
-        try {
-          return new URL(url).hostname;
-        } catch {
-          return "";
-        }
-      })(),
+      host: safeHostname(url),
       ok: false,
       error: error instanceof Error ? error.message : "Erro ao acessar URL.",
+      latencyMs: Date.now() - startedAt,
     };
   }
 }
@@ -64,7 +83,7 @@ function normalizeBackupSources(sources: MangaSourceEntry[] = []) {
 }
 
 export async function runSourceHealthCheck(db: Firestore) {
-  const snap = await db.collection("mangas").where("syncEnabled", "==", true).get();
+  const snap = await db.collection("mangas").where("autoSync", "==", true).get();
 
   const results: Array<{
     mangaId: string;
@@ -94,6 +113,7 @@ export async function runSourceHealthCheck(db: Firestore) {
     }
 
     const checks: SourceCheckResult[] = [];
+
     for (const source of sources) {
       if (!source?.url) continue;
       const result = await checkUrl(source.url);
@@ -137,16 +157,19 @@ export async function runSourceHealthCheck(db: Firestore) {
     await doc.ref.set(
       {
         primarySourceUrl: newPrimary,
-        primarySourceHost: newPrimary ? new URL(newPrimary).hostname : "",
+        primarySourceHost: newPrimary ? safeHostname(newPrimary) : "",
         sourceUrl: newPrimary || currentPrimary || "",
-        sourceHost:
-          newPrimary || currentPrimary
-            ? new URL(newPrimary || currentPrimary).hostname
-            : "",
+        sourceHost: newPrimary || currentPrimary
+          ? safeHostname(newPrimary || currentPrimary)
+          : "",
         backupSources: updatedBackupSources,
         sourceHealth: primaryCheck?.ok ? "healthy" : "warning",
-        sourceFailCount: primaryCheck?.ok ? 0 : Number(data?.sourceFailCount || 0) + 1,
-        lastSuccessSource: primaryCheck?.ok ? newPrimary : String(data?.lastSuccessSource || ""),
+        sourceFailCount: primaryCheck?.ok
+          ? 0
+          : Number(data?.sourceFailCount || 0) + 1,
+        lastSuccessSource: primaryCheck?.ok
+          ? newPrimary
+          : String(data?.lastSuccessSource || ""),
         lastSuccessAt: primaryCheck?.ok
           ? FieldValue.serverTimestamp()
           : data?.lastSuccessAt || null,

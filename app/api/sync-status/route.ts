@@ -16,6 +16,10 @@ function isAuthed(req: NextRequest) {
   return false;
 }
 
+function tsSeconds(value: any) {
+  return value?.seconds ?? value?._seconds ?? 0;
+}
+
 export async function GET(req: NextRequest) {
   if (!isAuthed(req)) {
     return NextResponse.json(
@@ -43,8 +47,12 @@ export async function GET(req: NextRequest) {
         id: doc.id,
         title: String(data?.title || "Sem título"),
         sourceUrl: String(data?.sourceUrl || ""),
+        primarySourceUrl: String(data?.primarySourceUrl || ""),
+        sourceHealth: String(data?.sourceHealth || ""),
         autoSync: Boolean(data?.autoSync),
+        syncEnabled: Boolean(data?.syncEnabled),
         syncStatus: String(data?.syncStatus || ""),
+        syncMode: String(data?.syncMode || ""),
         lastSyncError: String(data?.lastSyncError || ""),
         chaptersCount: Number(data?.chaptersCount || 0),
         lastChapterNumber: Number(data?.lastChapterNumber || 0),
@@ -52,6 +60,8 @@ export async function GET(req: NextRequest) {
         syncImportedLastRun: Number(data?.syncImportedLastRun || 0),
         syncSkippedLastRun: Number(data?.syncSkippedLastRun || 0),
         syncFoundLastRun: Number(data?.syncFoundLastRun || 0),
+        backupEnabled: Boolean(data?.backupEnabled),
+        mirrorEnabled: Boolean(data?.mirrorEnabled),
         syncLastRunAt: data?.syncLastRunAt || null,
         updatedAt: data?.updatedAt || null,
       };
@@ -59,11 +69,18 @@ export async function GET(req: NextRequest) {
 
     const autoSyncItems = items.filter((item) => item.autoSync);
     const errorItems = autoSyncItems.filter(
-      (item) => item.syncStatus === "error" || item.lastSyncError
+      (item) => item.syncStatus === "error" || Boolean(item.lastSyncError?.trim())
     );
-    const activeItems = autoSyncItems.filter(
-      (item) => item.syncStatus === "active"
+
+    const activeItems = autoSyncItems.filter((item) => item.syncStatus === "active");
+
+    const warningItems = autoSyncItems.filter(
+      (item) => item.syncStatus === "warning" || item.sourceHealth === "warning"
     );
+
+    const recentItems = [...autoSyncItems]
+      .sort((a, b) => tsSeconds(b.syncLastRunAt) - tsSeconds(a.syncLastRunAt))
+      .slice(0, 20);
 
     return NextResponse.json({
       ok: true,
@@ -71,16 +88,14 @@ export async function GET(req: NextRequest) {
         totalMangas: items.length,
         autoSyncCount: autoSyncItems.length,
         activeCount: activeItems.length,
+        warningCount: warningItems.length,
         errorCount: errorItems.length,
+        backupEnabledCount: items.filter((item) => item.backupEnabled).length,
+        mirrorEnabledCount: items.filter((item) => item.mirrorEnabled).length,
       },
       errorItems: errorItems.slice(0, 20),
-      recentItems: autoSyncItems
-        .sort((a, b) => {
-          const aSec = a.syncLastRunAt?.seconds || 0;
-          const bSec = b.syncLastRunAt?.seconds || 0;
-          return bSec - aSec;
-        })
-        .slice(0, 20),
+      warningItems: warningItems.slice(0, 20),
+      recentItems,
     });
   } catch (error: unknown) {
     console.error("GET /api/admin/sync-status error:", error);

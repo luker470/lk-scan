@@ -35,20 +35,20 @@ export async function POST(req: Request) {
       );
     }
 
-    const favRef = db
+    const followRef = db
       .collection("users")
       .doc(uid)
-      .collection("favorites")
+      .collection("following")
       .doc(mangaId);
 
-    const snap = await favRef.get();
+    const snap = await followRef.get();
 
     if (snap.exists) {
-      await favRef.delete();
-      return NextResponse.json({ ok: true, favorited: false });
+      await followRef.delete();
+      return NextResponse.json({ ok: true, following: false });
     }
 
-    await favRef.set(
+    await followRef.set(
       {
         mangaId,
         title,
@@ -60,9 +60,9 @@ export async function POST(req: Request) {
       { merge: true }
     );
 
-    return NextResponse.json({ ok: true, favorited: true });
+    return NextResponse.json({ ok: true, following: true });
   } catch (error: unknown) {
-    console.error("POST /api/favorites error:", error);
+    console.error("POST /api/following error:", error);
 
     const message =
       error instanceof Error ? error.message : "Internal error";
@@ -97,7 +97,7 @@ export async function GET(req: NextRequest) {
     const snap = await db
       .collection("users")
       .doc(uid)
-      .collection("favorites")
+      .collection("following")
       .orderBy("createdAt", "desc")
       .get();
 
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ ok: true, items });
   } catch (error: unknown) {
-    console.error("GET /api/favorites error:", error);
+    console.error("GET /api/following error:", error);
 
     const message =
       error instanceof Error ? error.message : "Internal error";

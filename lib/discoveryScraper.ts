@@ -1,158 +1,157 @@
 import * as cheerio from "cheerio";
-import {
-  absoluteUrl,
-  DISCOVERY_SOURCES,
-  sanitizeMangaTitle,
-  type DiscoveryItem,
-  type DiscoverySourceKey,
-  uniqueByUrlAndTitle,
-} from "@/lib/discovery";
+import { absoluteUrl, normalizeText, type DiscoverySourceKey } from "@/lib/discovery";
+
+export type DiscoveredMangaItem = {
+  source: DiscoverySourceKey;
+  title: string;
+  url: string;
+  cover?: string;
+  latestChapter?: string;
+  description?: string;
+  genres?: string[];
+};
 
 async function fetchHtml(url: string) {
+  const origin = new URL(url).origin;
+
   const res = await fetch(url, {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
       Accept:
         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      Referer: new URL(url).origin,
-      Origin: new URL(url).origin,
+      Referer: origin,
+      Origin: origin,
       "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-      "Cache-Control": "no-cache",
-      Pragma: "no-cache",
     },
     cache: "no-store",
   });
 
   if (!res.ok) {
-    throw new Error(`Falha ao buscar ${url}: ${res.status}`);
+    throw new Error(`Falha ao buscar lista de mangás: ${res.status}`);
   }
 
   return await res.text();
 }
 
-function cleanImage(src?: string | null) {
+function cleanImage(src?: string | null, baseUrl?: string) {
   if (!src) return "";
-  return src.replace(/-\d+x\d+(?=\.(jpg|jpeg|png|webp))/i, "").trim();
+  return absoluteUrl(baseUrl || "", src.trim());
 }
 
-function getCardTitle(root: cheerio.Cheerio<any>, pageUrl: string) {
-  const href = absoluteUrl(pageUrl, root.find("a").first().attr("href"));
-  const rawTitle =
-    root.find(".tt").first().text().trim() ||
-    root.find(".series-title").first().text().trim() ||
-    root.find(".bigor .tt").first().text().trim() ||
-    root.find("a[title]").first().attr("title") ||
-    root.find("img").first().attr("alt") ||
-    "";
-
-  return sanitizeMangaTitle(rawTitle, href);
+function uniqueByUrl(items: DiscoveredMangaItem[]) {
+  return items.filter(
+    (item, index, arr) => arr.findIndex((x) => x.url === item.url) === index
+  );
 }
 
-function parseMangasOnline(html: string, pageUrl: string): DiscoveryItem[] {
+function parseMangaOnlineRed(html: string): DiscoveredMangaItem[] {
+  const baseUrl = "https://mangaonline.red";
   const $ = cheerio.load(html);
-  const items: DiscoveryItem[] = [];
+  const results: DiscoveredMangaItem[] = [];
 
-  $(
-    "div.bs, div.page-item-detail, div.listupd .bs, .utao .uta .imgu, .listupd .bsx"
-  ).each((_, el) => {
+  $(".page-item-detail, .c-tabs-item__content, .postbody .bs").each((_, el) => {
     const root = $(el);
-    const url = absoluteUrl(pageUrl, root.find("a").first().attr("href")) || "";
-    const title = getCardTitle(root, pageUrl);
 
-    const cover = cleanImage(
-      absoluteUrl(
-        pageUrl,
+    const link =
+      root.find("a").first().attr("href") ||
+      root.find(".post-title a").attr("href") ||
+      root.find(".item-thumb a").attr("href") ||
+      "";
+
+    const title =
+      normalizeText(root.find(".post-title, .series-title, h3, h4").first().text()) ||
+      normalizeText(root.find("a").first().attr("title")) ||
+      "";
+
+    const cover =
+      cleanImage(
         root.find("img").first().attr("data-src") ||
           root.find("img").first().attr("data-lazy-src") ||
-          root.find("img").first().attr("src")
-      )
-    );
+          root.find("img").first().attr("src"),
+        baseUrl
+      ) || "";
 
     const latestChapter =
-      root.find(".epxs, .chapter, .lchx").first().text().trim() || "";
+      normalizeText(root.find(".chapter, .latest-chap, .post-on").first().text()) || "";
 
-    if (!title || !url) return;
+    const finalUrl = absoluteUrl(baseUrl, link);
 
-    items.push({
-      source: "mangasonline",
-      title,
-      url,
-      cover,
-      latestChapter,
-    });
-  });
+    if (!finalUrl || !title) return;
 
-  return items;
-}
-
-function parseMangaOnlineRed(html: string, pageUrl: string): DiscoveryItem[] {
-  const $ = cheerio.load(html);
-  const items: DiscoveryItem[] = [];
-
-  $(
-    "div.bs, div.page-item-detail, div.listupd .bs, .listupd .bsx, .utao .uta"
-  ).each((_, el) => {
-    const root = $(el);
-    const url = absoluteUrl(pageUrl, root.find("a").first().attr("href")) || "";
-    const title = getCardTitle(root, pageUrl);
-
-    const cover = cleanImage(
-      absoluteUrl(
-        pageUrl,
-        root.find("img").first().attr("data-src") ||
-          root.find("img").first().attr("data-lazy-src") ||
-          root.find("img").first().attr("src")
-      )
-    );
-
-    const latestChapter =
-      root.find(".epxs, .chapter, .lchx").first().text().trim() || "";
-
-    if (!title || !url) return;
-
-    items.push({
+    results.push({
       source: "mangaonlinered",
       title,
-      url,
+      url: finalUrl,
       cover,
       latestChapter,
+      description: "",
+      genres: [],
     });
   });
 
-  return items;
+  return uniqueByUrl(results);
 }
 
-function parseSource(source: DiscoverySourceKey, html: string, pageUrl: string) {
-  switch (source) {
-    case "mangasonline":
-      return parseMangasOnline(html, pageUrl);
-    case "mangaonlinered":
-      return parseMangaOnlineRed(html, pageUrl);
-    default:
-      return [];
-  }
+function parseMangasOnline(html: string): DiscoveredMangaItem[] {
+  const baseUrl = "https://mangasonline.blog";
+  const $ = cheerio.load(html);
+  const results: DiscoveredMangaItem[] = [];
+
+  $(".listupd .bs, .utao .uta, .page-item-detail").each((_, el) => {
+    const root = $(el);
+
+    const link =
+      root.find("a").first().attr("href") ||
+      root.find(".bsx a").attr("href") ||
+      "";
+
+    const title =
+      normalizeText(root.find(".tt, .title, h2, h3").first().text()) ||
+      normalizeText(root.find("a").first().attr("title")) ||
+      "";
+
+    const cover =
+      cleanImage(
+        root.find("img").first().attr("data-src") ||
+          root.find("img").first().attr("data-lazy-src") ||
+          root.find("img").first().attr("src"),
+        baseUrl
+      ) || "";
+
+    const latestChapter =
+      normalizeText(root.find(".epxs, .chapter, .latest-chap").first().text()) || "";
+
+    const finalUrl = absoluteUrl(baseUrl, link);
+
+    if (!finalUrl || !title) return;
+
+    results.push({
+      source: "mangasonline",
+      title,
+      url: finalUrl,
+      cover,
+      latestChapter,
+      description: "",
+      genres: [],
+    });
+  });
+
+  return uniqueByUrl(results);
 }
 
 export async function discoverFromSource(
-  sourceKey: DiscoverySourceKey
-): Promise<DiscoveryItem[]> {
-  const source = DISCOVERY_SOURCES.find((s) => s.key === sourceKey && s.enabled);
-  if (!source) {
-    throw new Error("Fonte inválida ou desativada.");
+  source: DiscoverySourceKey
+): Promise<DiscoveredMangaItem[]> {
+  if (source === "mangaonlinered") {
+    const html = await fetchHtml("https://mangaonline.red/");
+    return parseMangaOnlineRed(html);
   }
 
-  const all: DiscoveryItem[] = [];
-
-  for (const listUrl of source.listUrls) {
-    try {
-      const html = await fetchHtml(listUrl);
-      const parsed = parseSource(source.key, html, listUrl);
-      all.push(...parsed);
-    } catch (error) {
-      console.error("[DISCOVERY_ERROR]", source.key, listUrl, error);
-    }
+  if (source === "mangasonline") {
+    const html = await fetchHtml("https://mangasonline.blog/");
+    return parseMangasOnline(html);
   }
 
-  return uniqueByUrlAndTitle(all);
+  throw new Error(`Fonte não suportada: ${source}`);
 }

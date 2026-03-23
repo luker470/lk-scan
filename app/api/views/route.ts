@@ -10,13 +10,17 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function safeString(value: unknown) {
+  return String(value || "").trim();
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
 
-    const mangaId = String(body?.mangaId || "");
-    const chapterId = String(body?.chapterId || "");
-    const uid = String(body?.uid || "").trim();
+    const mangaId = safeString(body?.mangaId);
+    const chapterId = safeString(body?.chapterId);
+    const uid = safeString(body?.uid);
 
     if (!mangaId || !chapterId) {
       return NextResponse.json(
@@ -35,7 +39,6 @@ export async function POST(req: Request) {
     }
 
     const now = new Date();
-
     const dayKey = getDayKey(now);
     const weekKey = getWeekKey(now);
     const monthKey = getMonthKey(now);
@@ -114,6 +117,8 @@ export async function POST(req: Request) {
       const userRef = db.collection("users").doc(uid);
       const readKey = `${mangaId}_${chapterId}`;
       const readRef = userRef.collection("readChapters").doc(readKey);
+      const progressRef = userRef.collection("progress").doc(mangaId);
+      const historyRef = userRef.collection("history").doc(mangaId);
 
       const [userSnap, readSnap] = await Promise.all([userRef.get(), readRef.get()]);
 
@@ -134,12 +139,16 @@ export async function POST(req: Request) {
           { merge: true }
         );
 
-        batch.set(readRef, {
-          mangaId,
-          chapterId,
-          earnedXp,
-          createdAt: now,
-        });
+        batch.set(
+          readRef,
+          {
+            mangaId,
+            chapterId,
+            earnedXp,
+            createdAt: now,
+          },
+          { merge: true }
+        );
       } else if (userSnap.exists) {
         batch.set(
           userRef,
@@ -150,6 +159,35 @@ export async function POST(req: Request) {
           { merge: true }
         );
       }
+
+      batch.set(
+        progressRef,
+        {
+          mangaId,
+          chapterId,
+          updatedAt: now,
+        },
+        { merge: true }
+      );
+
+      const mangaTitle = safeString(mangaData.title);
+      const chapterTitle =
+        safeString(chapterData.title) ||
+        `Capítulo ${safeString(chapterData.number || chapterId)}`;
+
+      batch.set(
+        historyRef,
+        {
+          mangaId,
+          mangaTitle,
+          mangaCover: safeString(mangaData.cover),
+          chapterId,
+          chapterTitle,
+          chapterNumber: Number(chapterData.number || 0),
+          updatedAt: now,
+        },
+        { merge: true }
+      );
     }
 
     await batch.commit();
@@ -158,8 +196,7 @@ export async function POST(req: Request) {
   } catch (error: unknown) {
     console.error("POST /api/views error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Internal error";
+    const message = error instanceof Error ? error.message : "Internal error";
 
     return NextResponse.json(
       { ok: false, error: message },

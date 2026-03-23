@@ -16,9 +16,11 @@ import { isAdmin } from "@/lib/admin";
 import CleanupTitlesManager from "./CleanupTitlesManager";
 import DiscoveryAutoImportManager from "./DiscoveryAutoImportManager";
 import SyncStatusBoard from "./SyncStatusBoard";
-import SystemAutomationManager from "./SystemAutomationManager";
+import AutomationManagerPanel from "./SystemAutomationManager";
 import SourceHealthBoard from "./SourceHealthBoard";
 import BackupManager from "./BackupManager";
+import ParserDiagnosticsBoard from "./ParserDiagnosticsBoard";
+import ProductionBoard from "./ProductionBoard";
 
 import MangaList from "./MangaList";
 import ImportChapterLinks from "./chapters/ImportChapterLinks";
@@ -26,6 +28,7 @@ import ImportMangaFull from "./chapters/ImportMangaFull";
 import ImportAutoFromUrl from "./chapters/ImportAutoFromUrl";
 import DiscoveryManager from "./discovery/DiscoveryManager";
 import AdminPingTest from "./AdminPingTest";
+import MirrorManager from "./MirrorManager";
 import AutoSyncManager from "./AutoSyncManager";
 
 type TabKey =
@@ -78,6 +81,10 @@ function isValidHttpUrl(url: string) {
   }
 }
 
+function tsSeconds(v: any) {
+  return v?.seconds ?? 0;
+}
+
 function TabButton({
   active,
   onClick,
@@ -90,7 +97,7 @@ function TabButton({
   return (
     <button
       onClick={onClick}
-      className={`px-4 py-2 rounded-xl border transition text-sm font-semibold ${
+      className={`px-4 py-2 rounded-xl border transition text-sm font-semibold whitespace-nowrap ${
         active
           ? "border-cyan-400 text-cyan-300 bg-cyan-500/10"
           : "border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300"
@@ -101,9 +108,34 @@ function TabButton({
   );
 }
 
-function tsSeconds(v: any) {
-  return v?.seconds ?? 0;
+function StatCard({
+  label,
+  value,
+  loading,
+}: {
+  label: string;
+  value: string | number;
+  loading?: boolean;
+}) {
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+      <div className="text-sm text-zinc-400">{label}</div>
+      <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+        {loading ? "..." : value}
+      </div>
+    </div>
+  );
 }
+
+const INITIAL_STATS: MangaStats = {
+  totalMangas: 0,
+  totalViews: 0,
+  totalWeekViews: 0,
+  totalChapters: 0,
+  latestTitles: [],
+  topTitles: [],
+  autoSyncCount: 0,
+};
 
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
@@ -120,26 +152,121 @@ export default function AdminPage() {
   const [artist, setArtist] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [autoSync, setAutoSync] = useState(false);
+
   const [loading, setLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState<"" | "edit" | "delete">("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [statusType, setStatusType] = useState<"success" | "error" | "info">("info");
 
   const [mangaId, setMangaId] = useState<string>("");
   const [manualId, setManualId] = useState("");
 
   const [statsLoading, setStatsLoading] = useState(true);
-  const [stats, setStats] = useState<MangaStats>({
-    totalMangas: 0,
-    totalViews: 0,
-    totalWeekViews: 0,
-    totalChapters: 0,
-    latestTitles: [],
-    topTitles: [],
-    autoSyncCount: 0,
-  });
+  const [stats, setStats] = useState<MangaStats>(INITIAL_STATS);
 
   const [previewCover, setPreviewCover] = useState("");
   const [previewBanner, setPreviewBanner] = useState("");
 
   const mangaIdToUse = useMemo(() => cleanId(mangaId), [mangaId]);
+  const hasSelectedManga = Boolean(mangaIdToUse);
+
+  function showStatus(message: string, type: "success" | "error" | "info" = "info") {
+    setStatusMessage(message);
+    setStatusType(type);
+  }
+
+  function clearStatus() {
+    setStatusMessage("");
+    setStatusType("info");
+  }
+
+  function clearForm() {
+    setTitle("");
+    setGenre("");
+    setCoverUrl("");
+    setBannerUrl("");
+    setDescription("");
+    setStatus("");
+    setAuthor("");
+    setArtist("");
+    setSourceUrl("");
+    setAutoSync(false);
+  }
+
+  function fillFormFromManga(m: MangaDoc) {
+    setMangaId(m.id);
+    setManualId(m.id);
+    setTitle(m.title || "");
+    setGenre(m.genre || "");
+    setCoverUrl(m.cover || "");
+    setBannerUrl(m.banner || "");
+    setDescription(m.description || "");
+    setStatus(m.status || "");
+    setAuthor(m.author || "");
+    setArtist(m.artist || "");
+    setSourceUrl(m.sourceUrl || "");
+    setAutoSync(Boolean(m.autoSync));
+  }
+
+  async function loadStats() {
+    if (!db) {
+      setStats(INITIAL_STATS);
+      setStatsLoading(false);
+      return;
+    }
+
+    setStatsLoading(true);
+
+    try {
+      const snap = await getDocs(
+        query(collection(db, "mangas"), orderBy("createdAt", "desc"))
+      );
+
+      const items = snap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<MangaDoc, "id">),
+      })) as MangaDoc[];
+
+      let totalViews = 0;
+      let totalWeekViews = 0;
+      let totalChapters = 0;
+      let autoSyncCount = 0;
+
+      for (const item of items) {
+        totalViews += Number(item.views || 0);
+        totalWeekViews += Number(item.weekViews || 0);
+        totalChapters += Number(item.chaptersCount || 0);
+        if (item.autoSync) autoSyncCount++;
+      }
+
+      const latestTitles = items
+        .slice()
+        .sort((a, b) => tsSeconds(b.updatedAt) - tsSeconds(a.updatedAt))
+        .slice(0, 5)
+        .map((item) => item.title || "Sem título");
+
+      const topTitles = items
+        .slice()
+        .sort((a, b) => Number(b.views || 0) - Number(a.views || 0))
+        .slice(0, 5)
+        .map((item) => item.title || "Sem título");
+
+      setStats({
+        totalMangas: items.length,
+        totalViews,
+        totalWeekViews,
+        totalChapters,
+        latestTitles,
+        topTitles,
+        autoSyncCount,
+      });
+    } catch (error) {
+      console.error("Erro ao carregar stats:", error);
+      showStatus("Erro ao carregar estatísticas do painel.", "error");
+    } finally {
+      setStatsLoading(false);
+    }
+  }
 
   useEffect(() => {
     setPreviewCover(coverUrl.trim());
@@ -150,72 +277,6 @@ export default function AdminPage() {
   }, [bannerUrl]);
 
   useEffect(() => {
-    async function loadStats() {
-      setStatsLoading(true);
-
-      try {
-        const firestore = db;
-
-        if (!firestore) {
-          setStats({
-            totalMangas: 0,
-            totalViews: 0,
-            totalWeekViews: 0,
-            totalChapters: 0,
-            latestTitles: [],
-            topTitles: [],
-            autoSyncCount: 0,
-          });
-          return;
-        }
-
-        const snap = await getDocs(
-          query(collection(firestore, "mangas"), orderBy("createdAt", "desc"))
-        );
-
-        const items = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<MangaDoc, "id">),
-        })) as MangaDoc[];
-
-        const totalMangas = items.length;
-        const totalViews = items.reduce((sum, item) => sum + Number(item.views || 0), 0);
-        const totalWeekViews = items.reduce(
-          (sum, item) => sum + Number(item.weekViews || 0),
-          0
-        );
-        const totalChapters = items.reduce(
-          (sum, item) => sum + Number(item.chaptersCount || 0),
-          0
-        );
-        const autoSyncCount = items.filter((item) => Boolean(item.autoSync)).length;
-
-        const latestTitles = [...items]
-          .sort((a, b) => tsSeconds(b.updatedAt) - tsSeconds(a.updatedAt))
-          .slice(0, 5)
-          .map((item) => item.title || "Sem título");
-
-        const topTitles = [...items]
-          .sort((a, b) => Number(b.views || 0) - Number(a.views || 0))
-          .slice(0, 5)
-          .map((item) => item.title || "Sem título");
-
-        setStats({
-          totalMangas,
-          totalViews,
-          totalWeekViews,
-          totalChapters,
-          latestTitles,
-          topTitles,
-          autoSyncCount,
-        });
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setStatsLoading(false);
-      }
-    }
-
     if (!authLoading && user && isAdmin(user.uid)) {
       loadStats();
     }
@@ -248,20 +309,9 @@ export default function AdminPage() {
   const adminUid = user.uid;
   const adminLabel = user.email || adminUid;
 
-  function clearForm() {
-    setTitle("");
-    setGenre("");
-    setCoverUrl("");
-    setBannerUrl("");
-    setDescription("");
-    setStatus("");
-    setAuthor("");
-    setArtist("");
-    setSourceUrl("");
-    setAutoSync(false);
-  }
-
   async function handleCreateManga() {
+    clearStatus();
+
     const t = title.trim();
     const g = genre.trim();
     const c = coverUrl.trim();
@@ -273,29 +323,29 @@ export default function AdminPage() {
     const src = sourceUrl.trim();
 
     if (!t) {
-      alert("Preencha o título.");
+      showStatus("Preencha o título.", "error");
       return;
     }
 
     if (c && !isValidHttpUrl(c)) {
-      alert("Link da capa inválido.");
+      showStatus("Link da capa inválido.", "error");
       return;
     }
 
     if (b && !isValidHttpUrl(b)) {
-      alert("Link do banner inválido.");
+      showStatus("Link do banner inválido.", "error");
       return;
     }
 
     if (src && !isValidHttpUrl(src)) {
-      alert("SourceUrl inválida.");
+      showStatus("Source URL inválida.", "error");
       return;
     }
 
     const firestore = db;
 
     if (!firestore) {
-      alert("Firebase não inicializado.");
+      showStatus("Firebase não inicializado.", "error");
       return;
     }
 
@@ -328,28 +378,31 @@ export default function AdminPage() {
 
       setMangaId(created.id);
       setManualId(created.id);
-      alert(`Mangá criado! ID: ${created.id}`);
-      setTab("importar");
       clearForm();
-    } catch (e) {
-      console.error(e);
-      alert("Erro ao criar mangá.");
+      await loadStats();
+      showStatus(`Mangá criado com sucesso. ID: ${created.id}`, "success");
+      setTab("importar");
+    } catch (error) {
+      console.error(error);
+      showStatus("Erro ao criar mangá.", "error");
     } finally {
       setLoading(false);
     }
   }
 
   function handleUseExistingId() {
+    clearStatus();
+
     const id = cleanId(manualId);
 
     if (!id) {
-      alert("Cole um MangaId válido.");
+      showStatus("Cole um MangaId válido.", "error");
       return;
     }
 
     setMangaId(id);
     setManualId(id);
-    alert(`Usando MangaId: ${id}`);
+    showStatus(`Usando MangaId: ${id}`, "success");
     setTab("importar");
   }
 
@@ -359,6 +412,7 @@ export default function AdminPage() {
     clearForm();
     setPreviewCover("");
     setPreviewBanner("");
+    clearStatus();
   }
 
   async function handleCopyId() {
@@ -366,80 +420,102 @@ export default function AdminPage() {
 
     try {
       await navigator.clipboard.writeText(mangaIdToUse);
-      alert("ID copiado");
+      showStatus("ID copiado com sucesso.", "success");
     } catch {
-      alert("Copie manualmente");
+      showStatus("Não foi possível copiar. Copie manualmente.", "error");
     }
   }
 
   async function handleEditManga() {
     if (!mangaIdToUse) {
-      alert("Selecione um mangá primeiro.");
+      showStatus("Selecione um mangá primeiro.", "error");
       return;
     }
 
-    const payload = {
-      mangaId: mangaIdToUse,
-      title,
-      genre,
-      cover: coverUrl,
-      banner: bannerUrl,
-      description,
-      status,
-      author,
-      artist,
-      sourceUrl,
-      autoSync,
-    };
+    clearStatus();
+    setActionLoading("edit");
 
-    const res = await fetch("/api/admin/manga", {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "x-user-id": adminUid,
-      },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const payload = {
+        mangaId: mangaIdToUse,
+        title: title.trim(),
+        genre: genre.trim(),
+        cover: coverUrl.trim(),
+        banner: bannerUrl.trim(),
+        description: description.trim(),
+        status: status.trim(),
+        author: author.trim(),
+        artist: artist.trim(),
+        sourceUrl: sourceUrl.trim(),
+        autoSync,
+      };
 
-    const txt = await res.text();
+      const res = await fetch("/api/admin/manga", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-user-id": adminUid,
+        },
+        body: JSON.stringify(payload),
+      });
 
-    if (!res.ok) {
-      alert(txt);
-      return;
+      const txt = await res.text();
+
+      if (!res.ok) {
+        showStatus(txt || "Erro ao editar mangá.", "error");
+        return;
+      }
+
+      await loadStats();
+      showStatus("Mangá editado com sucesso.", "success");
+    } catch (error) {
+      console.error(error);
+      showStatus("Erro ao editar mangá.", "error");
+    } finally {
+      setActionLoading("");
     }
-
-    alert("Editado!");
   }
 
   async function handleDeleteManga() {
     if (!mangaIdToUse) {
-      alert("Selecione um mangá primeiro.");
+      showStatus("Selecione um mangá primeiro.", "error");
       return;
     }
 
     const sure = confirm("Apagar mangá e capítulos?");
     if (!sure) return;
 
-    const res = await fetch(
-      `/api/admin/manga?mangaId=${encodeURIComponent(mangaIdToUse)}`,
-      {
-        method: "DELETE",
-        headers: {
-          "x-user-id": adminUid,
-        },
+    clearStatus();
+    setActionLoading("delete");
+
+    try {
+      const res = await fetch(
+        `/api/admin/manga?mangaId=${encodeURIComponent(mangaIdToUse)}`,
+        {
+          method: "DELETE",
+          headers: {
+            "x-user-id": adminUid,
+          },
+        }
+      );
+
+      const txt = await res.text();
+
+      if (!res.ok) {
+        showStatus(txt || "Erro ao excluir mangá.", "error");
+        return;
       }
-    );
 
-    const txt = await res.text();
-
-    if (!res.ok) {
-      alert(txt);
-      return;
+      handleClearId();
+      await loadStats();
+      setTab("dashboard");
+      showStatus("Mangá excluído com sucesso.", "success");
+    } catch (error) {
+      console.error(error);
+      showStatus("Erro ao excluir mangá.", "error");
+    } finally {
+      setActionLoading("");
     }
-
-    alert("Excluído!");
-    handleClearId();
-    setTab("dashboard");
   }
 
   return (
@@ -454,7 +530,7 @@ export default function AdminPage() {
               </h1>
               <div className="mt-2 text-sm text-zinc-400">
                 Manga em uso:{" "}
-                {mangaIdToUse ? (
+                {hasSelectedManga ? (
                   <span className="text-cyan-300 font-semibold">{mangaIdToUse}</span>
                 ) : (
                   <span>nenhum selecionado</span>
@@ -470,14 +546,14 @@ export default function AdminPage() {
                 Dashboard
               </button>
 
-              {mangaIdToUse && (
+              {hasSelectedManga ? (
                 <button
                   onClick={handleCopyId}
                   className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400 hover:text-cyan-300 transition"
                 >
                   Copiar ID
                 </button>
-              )}
+              ) : null}
 
               <button
                 onClick={handleClearId}
@@ -485,12 +561,33 @@ export default function AdminPage() {
               >
                 Limpar seleção
               </button>
+
+              <button
+                onClick={loadStats}
+                className="px-4 py-2 rounded-xl border border-zinc-700 hover:border-cyan-400 hover:text-cyan-300 transition"
+              >
+                Atualizar dados
+              </button>
             </div>
           </div>
         </section>
 
+        {statusMessage ? (
+          <section
+            className={`rounded-2xl border p-4 text-sm font-medium ${
+              statusType === "success"
+                ? "border-emerald-700 bg-emerald-500/10 text-emerald-300"
+                : statusType === "error"
+                ? "border-red-700 bg-red-500/10 text-red-300"
+                : "border-cyan-700 bg-cyan-500/10 text-cyan-300"
+            }`}
+          >
+            {statusMessage}
+          </section>
+        ) : null}
+
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex gap-2 overflow-x-auto pb-1">
             <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
               📊 Dashboard
             </TabButton>
@@ -515,40 +612,31 @@ export default function AdminPage() {
         {tab === "dashboard" && (
           <section className="space-y-6">
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <div className="text-sm text-zinc-400">Mangás cadastrados</div>
-                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
-                  {statsLoading ? "..." : stats.totalMangas}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <div className="text-sm text-zinc-400">Capítulos totais</div>
-                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
-                  {statsLoading ? "..." : stats.totalChapters}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <div className="text-sm text-zinc-400">Views totais</div>
-                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
-                  {statsLoading ? "..." : stats.totalViews.toLocaleString()}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <div className="text-sm text-zinc-400">Views da semana</div>
-                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
-                  {statsLoading ? "..." : stats.totalWeekViews.toLocaleString()}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <div className="text-sm text-zinc-400">Auto sync ativos</div>
-                <div className="mt-2 text-3xl font-extrabold text-cyan-400">
-                  {statsLoading ? "..." : stats.autoSyncCount}
-                </div>
-              </div>
+              <StatCard
+                label="Mangás cadastrados"
+                value={stats.totalMangas}
+                loading={statsLoading}
+              />
+              <StatCard
+                label="Capítulos totais"
+                value={stats.totalChapters}
+                loading={statsLoading}
+              />
+              <StatCard
+                label="Views totais"
+                value={stats.totalViews.toLocaleString()}
+                loading={statsLoading}
+              />
+              <StatCard
+                label="Views da semana"
+                value={stats.totalWeekViews.toLocaleString()}
+                loading={statsLoading}
+              />
+              <StatCard
+                label="Auto sync ativos"
+                value={stats.autoSyncCount}
+                loading={statsLoading}
+              />
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
@@ -611,7 +699,9 @@ export default function AdminPage() {
 
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
                     <span className="text-zinc-400">Admin logado: </span>
-                    <span className="text-zinc-200 font-semibold">{adminLabel}</span>
+                    <span className="text-zinc-200 font-semibold break-all">
+                      {adminLabel}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -619,7 +709,9 @@ export default function AdminPage() {
 
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">🆕 Últimos atualizados</h2>
+                <h2 className="text-lg font-bold text-cyan-400 mb-4">
+                  🆕 Últimos atualizados
+                </h2>
 
                 <div className="space-y-2">
                   {stats.latestTitles.length === 0 ? (
@@ -657,14 +749,17 @@ export default function AdminPage() {
               </div>
             </div>
 
+            <ProductionBoard />
             <AdminPingTest />
             <AutoSyncManager />
             <CleanupTitlesManager />
             <DiscoveryAutoImportManager />
             <SyncStatusBoard />
-            <SystemAutomationManager />
+            <AutomationManagerPanel />
             <SourceHealthBoard />
             <BackupManager />
+            <MirrorManager />
+            <ParserDiagnosticsBoard />
           </section>
         )}
 
@@ -694,19 +789,9 @@ export default function AdminPage() {
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
               <MangaList
                 onSelect={(m) => {
-                  setMangaId(m.id);
-                  setManualId(m.id);
-                  setTitle(m.title || "");
-                  setGenre(m.genre || "");
-                  setCoverUrl(m.cover || "");
-                  setBannerUrl(m.banner || "");
-                  setDescription(m.description || "");
-                  setStatus(m.status || "");
-                  setAuthor(m.author || "");
-                  setArtist(m.artist || "");
-                  setSourceUrl(m.sourceUrl || "");
-                  setAutoSync(Boolean(m.autoSync));
+                  fillFormFromManga(m);
                   setTab("editar");
+                  showStatus(`Mangá selecionado: ${m.title || m.id}`, "success");
                 }}
               />
             </div>
@@ -867,7 +952,7 @@ export default function AdminPage() {
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
               <h2 className="text-xl font-bold text-cyan-400">✏️ Editar mangá</h2>
 
-              {!mangaIdToUse ? (
+              {!hasSelectedManga ? (
                 <div className="rounded-xl border border-zinc-800 bg-black/30 p-4 text-zinc-400">
                   Selecione um mangá primeiro na aba <b>Selecionar mangá</b>.
                 </div>
@@ -969,16 +1054,18 @@ export default function AdminPage() {
                   <div className="flex flex-col md:flex-row gap-3">
                     <button
                       onClick={handleEditManga}
-                      className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition"
+                      disabled={actionLoading === "edit"}
+                      className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition disabled:opacity-50"
                     >
-                      Salvar alterações
+                      {actionLoading === "edit" ? "Salvando..." : "Salvar alterações"}
                     </button>
 
                     <button
                       onClick={handleDeleteManga}
-                      className="px-5 py-3 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition"
+                      disabled={actionLoading === "delete"}
+                      className="px-5 py-3 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition disabled:opacity-50"
                     >
-                      Excluir mangá
+                      {actionLoading === "delete" ? "Excluindo..." : "Excluir mangá"}
                     </button>
                   </div>
                 </>
@@ -1032,7 +1119,7 @@ export default function AdminPage() {
 
         {tab === "importar" && (
           <>
-            {!mangaIdToUse ? (
+            {!hasSelectedManga ? (
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 text-zinc-300">
                 Selecione um mangá primeiro.
               </div>

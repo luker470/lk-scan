@@ -20,11 +20,18 @@ export function getDayKey(date = new Date()) {
   ).padStart(2, "0")}`;
 }
 
-export function buildUpdatedUserProgress(currentData: any, earnedXp: number) {
-  const currentXpTotal = Number(currentData?.xpTotal || 0);
-  const currentChaptersRead = Number(currentData?.chaptersRead || 0);
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
 
-  const xpTotal = currentXpTotal + earnedXp;
+export function buildUpdatedUserProgress(currentData: any, earnedXp: number) {
+  const currentXpTotal = safeNumber(currentData?.xpTotal, 0);
+  const currentChaptersRead = safeNumber(currentData?.chaptersRead, 0);
+  const currentMangaStarted = safeNumber(currentData?.mangaStarted, 0);
+  const currentMangaCompleted = safeNumber(currentData?.mangaCompleted, 0);
+
+  const xpTotal = currentXpTotal + safeNumber(earnedXp, 0);
   const chaptersRead = currentChaptersRead + 1;
 
   const levelData = getLevelFromXp(xpTotal);
@@ -37,6 +44,8 @@ export function buildUpdatedUserProgress(currentData: any, earnedXp: number) {
     xpToNext: levelData.xpToNext,
     progressPercent: levelData.progressPercent,
     chaptersRead,
+    mangaStarted: currentMangaStarted,
+    mangaCompleted: currentMangaCompleted,
     rankScore: xpTotal,
     title,
   };

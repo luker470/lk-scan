@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useRouter } from "next/navigation";
 
-type FavoriteItem = {
+type FollowingItem = {
   id: string;
 };
 
-export default function FavoriteButton({
+export default function FollowButton({
   mangaId,
   title,
   cover,
@@ -22,7 +22,7 @@ export default function FavoriteButton({
   const { user } = useAuth();
   const router = useRouter();
 
-  const [favorited, setFavorited] = useState(false);
+  const [following, setFollowing] = useState(false);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -30,23 +30,23 @@ export default function FavoriteButton({
 
     async function load() {
       if (!user?.uid) {
-        setFavorited(false);
+        setFollowing(false);
         return;
       }
 
       try {
-        const res = await fetch(`/api/favorites?uid=${encodeURIComponent(user.uid)}`);
+        const res = await fetch(`/api/following?uid=${encodeURIComponent(user.uid)}`);
         const data = await res.json();
 
         if (!data?.ok) return;
 
-        const exists = (data.items || []).some((item: FavoriteItem) => item.id === mangaId);
+        const exists = (data.items || []).some((item: FollowingItem) => item.id === mangaId);
 
         if (!cancelled) {
-          setFavorited(exists);
+          setFollowing(exists);
         }
       } catch (e) {
-        console.error("Erro ao carregar favoritos:", e);
+        console.error("Erro ao carregar seguindo:", e);
       }
     }
 
@@ -57,7 +57,7 @@ export default function FavoriteButton({
     };
   }, [user?.uid, mangaId]);
 
-  async function toggleFavorite() {
+  async function toggleFollowing() {
     if (!user?.uid) {
       router.push("/login");
       return;
@@ -66,7 +66,7 @@ export default function FavoriteButton({
     setLoading(true);
 
     try {
-      const res = await fetch("/api/favorites", {
+      const res = await fetch("/api/following", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -83,12 +83,12 @@ export default function FavoriteButton({
       const data = await res.json();
 
       if (data?.ok) {
-        setFavorited(!!data.favorited);
+        setFollowing(!!data.following);
       } else {
-        console.error("Não consegui atualizar os favoritos.");
+        console.error("Não consegui atualizar seguindo.");
       }
     } catch (e) {
-      console.error("Erro ao favoritar:", e);
+      console.error("Erro ao seguir:", e);
     } finally {
       setLoading(false);
     }
@@ -96,15 +96,15 @@ export default function FavoriteButton({
 
   return (
     <button
-      onClick={toggleFavorite}
+      onClick={toggleFollowing}
       disabled={loading}
       className={`px-5 py-3 rounded-xl font-bold transition text-center ${
-        favorited
-          ? "bg-pink-500 text-white hover:bg-pink-600"
-          : "border border-zinc-700 text-zinc-200 hover:border-pink-400 hover:text-pink-300"
+        following
+          ? "bg-cyan-500 text-black hover:bg-cyan-400"
+          : "border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300"
       } ${loading ? "opacity-70 cursor-not-allowed" : ""}`}
     >
-      {loading ? "Salvando..." : favorited ? "❤️ Favoritado" : "🤍 Favoritar"}
+      {loading ? "Salvando..." : following ? "🔔 Seguindo" : "🔔 Seguir"}
     </button>
   );
 }
