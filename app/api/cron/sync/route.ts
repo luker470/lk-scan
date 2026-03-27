@@ -45,9 +45,8 @@ export async function GET(req: NextRequest) {
     });
 
     return NextResponse.json({
-      ok: true,
-      mode: "cron-incremental-sync",
       ...result,
+      mode: "cron-incremental-sync",
     });
   } catch (error: unknown) {
     console.error("GET /api/cron/sync error:", error);

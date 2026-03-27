@@ -14,6 +14,11 @@ function safeString(value: unknown) {
   return String(value || "").trim();
 }
 
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => null);
@@ -70,23 +75,23 @@ export async function POST(req: Request) {
     const currentChapterMonthKey = chapterData.monthBucket || null;
 
     const nextMangaDayViews =
-      currentMangaDayKey === dayKey ? Number(mangaData.dayViews || 0) + 1 : 1;
+      currentMangaDayKey === dayKey ? safeNumber(mangaData.dayViews, 0) + 1 : 1;
     const nextMangaWeekViews =
-      currentMangaWeekKey === weekKey ? Number(mangaData.weekViews || 0) + 1 : 1;
+      currentMangaWeekKey === weekKey ? safeNumber(mangaData.weekViews, 0) + 1 : 1;
     const nextMangaMonthViews =
-      currentMangaMonthKey === monthKey ? Number(mangaData.monthViews || 0) + 1 : 1;
+      currentMangaMonthKey === monthKey ? safeNumber(mangaData.monthViews, 0) + 1 : 1;
 
     const nextChapterDayViews =
-      currentChapterDayKey === dayKey ? Number(chapterData.dayViews || 0) + 1 : 1;
+      currentChapterDayKey === dayKey ? safeNumber(chapterData.dayViews, 0) + 1 : 1;
     const nextChapterWeekViews =
-      currentChapterWeekKey === weekKey ? Number(chapterData.weekViews || 0) + 1 : 1;
+      currentChapterWeekKey === weekKey ? safeNumber(chapterData.weekViews, 0) + 1 : 1;
     const nextChapterMonthViews =
-      currentChapterMonthKey === monthKey ? Number(chapterData.monthViews || 0) + 1 : 1;
+      currentChapterMonthKey === monthKey ? safeNumber(chapterData.monthViews, 0) + 1 : 1;
 
     batch.set(
       mangaRef,
       {
-        views: Number(mangaData.views || 0) + 1,
+        views: safeNumber(mangaData.views, 0) + 1,
         dayViews: nextMangaDayViews,
         weekViews: nextMangaWeekViews,
         monthViews: nextMangaMonthViews,
@@ -101,7 +106,7 @@ export async function POST(req: Request) {
     batch.set(
       chapterRef,
       {
-        views: Number(chapterData.views || 0) + 1,
+        views: safeNumber(chapterData.views, 0) + 1,
         dayViews: nextChapterDayViews,
         weekViews: nextChapterWeekViews,
         monthViews: nextChapterMonthViews,
@@ -160,20 +165,22 @@ export async function POST(req: Request) {
         );
       }
 
+      const mangaTitle = safeString(mangaData.title);
+      const chapterTitle =
+        safeString(chapterData.title) ||
+        `Capítulo ${safeString(chapterData.number || chapterId)}`;
+
       batch.set(
         progressRef,
         {
           mangaId,
           chapterId,
+          chapterTitle,
+          chapterNumber: safeNumber(chapterData.number, 0),
           updatedAt: now,
         },
         { merge: true }
       );
-
-      const mangaTitle = safeString(mangaData.title);
-      const chapterTitle =
-        safeString(chapterData.title) ||
-        `Capítulo ${safeString(chapterData.number || chapterId)}`;
 
       batch.set(
         historyRef,
@@ -183,7 +190,7 @@ export async function POST(req: Request) {
           mangaCover: safeString(mangaData.cover),
           chapterId,
           chapterTitle,
-          chapterNumber: Number(chapterData.number || 0),
+          chapterNumber: safeNumber(chapterData.number, 0),
           updatedAt: now,
         },
         { merge: true }

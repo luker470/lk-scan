@@ -15,6 +15,8 @@ import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import FavoriteButton from "@/components/FavoriteButton";
 import FollowButton from "@/components/FollowButton";
+import Comments from "@/components/Comments";
+import OperatorFloatingChat from "@/components/OperatorFloatingChat";
 import { useAuth } from "@/context/AuthContext";
 
 type Chapter = {
@@ -685,7 +687,11 @@ export default function MangaClient({ id }: { id: string }) {
             )}
           </aside>
         </section>
+
+        <Comments mangaId={manga.id} title="💬 Comentários da obra" />
       </div>
+
+      <OperatorFloatingChat />
     </main>
   );
 }

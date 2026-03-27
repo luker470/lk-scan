@@ -2,7 +2,13 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { collection, getDocs, limit, orderBy, query } from "firebase/firestore";
+import {
+  collection,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+} from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { proxifyImage } from "@/lib/imgProxy";
 import { useAuth } from "@/context/AuthContext";
@@ -18,6 +24,7 @@ interface Manga {
   banner?: string;
   genre?: string;
   description?: string;
+  synopsis?: string;
   status?: string;
   views?: number;
   weekViews?: number;
@@ -27,6 +34,7 @@ interface Manga {
   updatedAt?: any;
   chaptersCount?: number;
   lastChapterNumber?: number;
+  latestChapter?: string;
 }
 
 type HistoryItem = {
@@ -36,6 +44,7 @@ type HistoryItem = {
   mangaTitle: string;
   mangaCover?: string;
   chapterTitle?: string;
+  chapterNumber?: number;
   updatedAt?: any;
 };
 
@@ -51,7 +60,16 @@ type ReaderRankItem = {
 };
 
 function tsSeconds(v: any) {
-  return v?.seconds ?? 0;
+  return v?.seconds ?? v?._seconds ?? 0;
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function safeString(value: unknown) {
+  return String(value || "").trim();
 }
 
 function formatRankValue(tab: RankingTab, manga: Manga) {
@@ -80,8 +98,29 @@ function formatStatus(status?: string) {
 function splitGenres(value?: string) {
   return String(value || "")
     .split(",")
-    .map((item) => item.trim())
+    .map((item) => item.trim().toLowerCase())
     .filter(Boolean);
+}
+
+function getMangaDescription(manga?: Manga | null) {
+  if (!manga) return "";
+  return manga.description?.trim() || manga.synopsis?.trim() || "";
+}
+
+function buildLastChapterHref(manga: Manga) {
+  const chapterIdFromNumber =
+    safeNumber(manga.lastChapterNumber, 0) > 0
+      ? String(safeNumber(manga.lastChapterNumber, 0)).padStart(3, "0")
+      : "";
+
+  const chapterId =
+    safeString((manga as any).latestChapterId) ||
+    safeString((manga as any).lastChapterId) ||
+    chapterIdFromNumber;
+
+  if (!chapterId) return "";
+
+  return `/manga/${manga.id}/chapter/${chapterId}`;
 }
 
 function RankingSidebar({
@@ -98,30 +137,30 @@ function RankingSidebar({
   const rankingMangas = useMemo(() => {
     if (rankingTab === "daily") {
       return [...mangas]
-        .sort((a, b) => (b.dayViews ?? 0) - (a.dayViews ?? 0))
+        .sort((a, b) => safeNumber(b.dayViews, 0) - safeNumber(a.dayViews, 0))
         .slice(0, 8);
     }
 
     if (rankingTab === "weekly") {
       return [...mangas]
-        .sort((a, b) => (b.weekViews ?? 0) - (a.weekViews ?? 0))
+        .sort((a, b) => safeNumber(b.weekViews, 0) - safeNumber(a.weekViews, 0))
         .slice(0, 8);
     }
 
     if (rankingTab === "monthly") {
       return [...mangas]
-        .sort((a, b) => (b.monthViews ?? 0) - (a.monthViews ?? 0))
+        .sort((a, b) => safeNumber(b.monthViews, 0) - safeNumber(a.monthViews, 0))
         .slice(0, 8);
     }
 
     return [...mangas]
-      .sort((a, b) => (b.views ?? 0) - (a.views ?? 0))
+      .sort((a, b) => safeNumber(b.views, 0) - safeNumber(a.views, 0))
       .slice(0, 8);
   }, [mangas, rankingTab]);
 
   const topReaders = useMemo(() => {
     return [...readers]
-      .sort((a, b) => (b.xpTotal ?? 0) - (a.xpTotal ?? 0))
+      .sort((a, b) => safeNumber(b.xpTotal, 0) - safeNumber(a.xpTotal, 0))
       .slice(0, 8);
   }, [readers]);
 
@@ -280,6 +319,7 @@ export default function Home() {
   const [genreFilter, setGenreFilter] = useState("Todos");
   const [orderMode, setOrderMode] = useState<OrderMode>("updated");
   const [rankingTab, setRankingTab] = useState<RankingTab>("weekly");
+  const [loadingHome, setLoadingHome] = useState(true);
 
   const autoTabs: RankingTab[] = ["daily", "weekly", "monthly", "readers"];
   const pauseUntilRef = useRef<number>(0);
@@ -304,31 +344,48 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function fetchMangas() {
-      if (!db) {
-        setMangas([]);
-        return;
+      try {
+        if (!db) {
+          if (!cancelled) setMangas([]);
+          return;
+        }
+
+        let snap;
+        try {
+          snap = await getDocs(
+            query(
+              collection(db, "mangas"),
+              orderBy("updatedAt", "desc"),
+              limit(60)
+            )
+          );
+        } catch {
+          snap = await getDocs(query(collection(db, "mangas"), limit(60)));
+        }
+
+        const data: Manga[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<Manga, "id">),
+        }));
+
+        if (!cancelled) {
+          setMangas(data);
+        }
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setMangas([]);
+        }
       }
-
-      const q = query(
-        collection(db, "mangas"),
-        orderBy("updatedAt", "desc"),
-        limit(60)
-      );
-      const snap = await getDocs(q);
-
-      const data: Manga[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<Manga, "id">),
-      }));
-
-      setMangas(data);
     }
 
     async function fetchReaders() {
       try {
         if (!db) {
-          setReaders([]);
+          if (!cancelled) setReaders([]);
           return;
         }
 
@@ -337,17 +394,36 @@ export default function Home() {
           id: d.id,
           ...(d.data() as Omit<ReaderRankItem, "id">),
         }));
-        setReaders(data);
+
+        if (!cancelled) {
+          setReaders(data);
+        }
       } catch (e) {
         console.error(e);
+        if (!cancelled) {
+          setReaders([]);
+        }
       }
     }
 
-    fetchMangas();
-    fetchReaders();
+    async function loadAll() {
+      setLoadingHome(true);
+      await Promise.all([fetchMangas(), fetchReaders()]);
+      if (!cancelled) {
+        setLoadingHome(false);
+      }
+    }
+
+    loadAll();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function fetchRecentReads() {
       if (!user?.uid) {
         setRecentReads([]);
@@ -357,13 +433,23 @@ export default function Home() {
       try {
         const res = await fetch(`/api/history?uid=${encodeURIComponent(user.uid)}`);
         const data = await res.json();
-        setRecentReads(data?.items || []);
+
+        if (!cancelled) {
+          setRecentReads(data?.items || []);
+        }
       } catch (e) {
         console.error(e);
+        if (!cancelled) {
+          setRecentReads([]);
+        }
       }
     }
 
     fetchRecentReads();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user?.uid]);
 
   const genres = useMemo(() => {
@@ -371,6 +457,7 @@ export default function Home() {
     mangas.forEach((m) => {
       splitGenres(m.genre).forEach((g) => set.add(g));
     });
+
     return ["Todos", ...Array.from(set).sort((a, b) => a.localeCompare(b))];
   }, [mangas]);
 
@@ -384,7 +471,7 @@ export default function Home() {
       const okGenre =
         genreFilter === "Todos"
           ? true
-          : splitGenres(m.genre).includes(genreFilter);
+          : splitGenres(m.genre).includes(genreFilter.toLowerCase());
 
       return okQuery && okGenre;
     });
@@ -392,7 +479,7 @@ export default function Home() {
     if (orderMode === "az") {
       list = [...list].sort((a, b) => a.title.localeCompare(b.title));
     } else if (orderMode === "views") {
-      list = [...list].sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+      list = [...list].sort((a, b) => safeNumber(b.views, 0) - safeNumber(a.views, 0));
     } else if (orderMode === "created") {
       list = [...list].sort((a, b) => tsSeconds(b.createdAt) - tsSeconds(a.createdAt));
     } else {
@@ -408,20 +495,31 @@ export default function Home() {
   }, [mangas, queryText, genreFilter, orderMode]);
 
   const topViews = useMemo(() => {
-    return [...mangas].sort((a, b) => (b.views ?? 0) - (a.views ?? 0)).slice(0, 10);
+    return [...mangas]
+      .sort((a, b) => safeNumber(b.views, 0) - safeNumber(a.views, 0))
+      .slice(0, 10);
   }, [mangas]);
 
   const topWeek = useMemo(() => {
-    return [...mangas].sort((a, b) => (b.weekViews ?? 0) - (a.weekViews ?? 0)).slice(0, 10);
+    return [...mangas]
+      .sort((a, b) => safeNumber(b.weekViews, 0) - safeNumber(a.weekViews, 0))
+      .slice(0, 10);
   }, [mangas]);
 
   const heroManga = useMemo(() => filtered[0] || mangas[0] || null, [filtered, mangas]);
-  const heroImage = heroManga
-    ? proxifyImage(heroManga.banner || heroManga.cover)
-    : null;
+  const heroImage = heroManga ? proxifyImage(heroManga.banner || heroManga.cover) : null;
+  const heroLastChapterHref = heroManga ? buildLastChapterHref(heroManga) : "";
 
   const highlights = useMemo(() => filtered.slice(0, 10), [filtered]);
   const recentUpdated = useMemo(() => filtered.slice(0, 8), [filtered]);
+
+  if (loadingHome) {
+    return (
+      <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white flex items-center justify-center">
+        Carregando home...
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-black via-zinc-900 to-black text-white">
@@ -466,14 +564,12 @@ export default function Home() {
                       ) : null}
 
                       <span className="rounded-full border border-zinc-700 px-2 py-1 text-zinc-300">
-                        {(heroManga.views ?? 0).toLocaleString()} views
+                        {safeNumber(heroManga.views, 0).toLocaleString()} views
                       </span>
                     </div>
 
                     <p className="mt-3 line-clamp-3 text-sm text-zinc-300">
-                      {heroManga.description?.trim()
-                        ? heroManga.description
-                        : "Acompanhe esta obra em destaque no LK-Scan."}
+                      {getMangaDescription(heroManga) || "Acompanhe esta obra em destaque no LK-Scan."}
                     </p>
 
                     <div className="mt-4 flex flex-wrap gap-3">
@@ -484,11 +580,9 @@ export default function Home() {
                         Ver obra
                       </Link>
 
-                      {heroManga.lastChapterNumber ? (
+                      {heroLastChapterHref ? (
                         <Link
-                          href={`/manga/${heroManga.id}/chapter/${String(
-                            heroManga.lastChapterNumber
-                          ).padStart(3, "0")}`}
+                          href={heroLastChapterHref}
                           className="rounded-xl border border-zinc-700 px-4 py-2 hover:border-cyan-400 transition"
                         >
                           Ler último capítulo
@@ -538,13 +632,13 @@ export default function Home() {
             value={queryText}
             onChange={(e) => setQueryText(e.target.value)}
             placeholder="Buscar mangá..."
-            className="p-3 rounded-xl bg-zinc-900 border border-zinc-800"
+            className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 outline-none focus:border-cyan-400"
           />
 
           <select
             value={genreFilter}
             onChange={(e) => setGenreFilter(e.target.value)}
-            className="p-3 rounded-xl bg-zinc-900 border border-zinc-800"
+            className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 outline-none focus:border-cyan-400"
           >
             {genres.map((g) => (
               <option key={g}>{g}</option>
@@ -554,7 +648,7 @@ export default function Home() {
           <select
             value={orderMode}
             onChange={(e) => setOrderMode(e.target.value as OrderMode)}
-            className="p-3 rounded-xl bg-zinc-900 border border-zinc-800"
+            className="p-3 rounded-xl bg-zinc-900 border border-zinc-800 outline-none focus:border-cyan-400"
           >
             <option value="updated">Atualizados</option>
             <option value="created">Recentes</option>
@@ -567,7 +661,15 @@ export default function Home() {
           <div className="space-y-10">
             {user && recentReads.length > 0 && (
               <section>
-                <h2 className="text-xl font-semibold mb-4">📚 Vistos recentes</h2>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h2 className="text-xl font-semibold">📚 Vistos recentes</h2>
+                  <Link
+                    href="/history"
+                    className="text-sm text-cyan-300 hover:text-cyan-200"
+                  >
+                    Ver histórico →
+                  </Link>
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {recentReads.slice(0, 6).map((item) => {
@@ -656,7 +758,7 @@ export default function Home() {
                             </span>
                           ) : null}
                           <span className="rounded-full border border-zinc-700 px-2 py-1 text-[11px] text-zinc-400">
-                            {(manga.views ?? 0).toLocaleString()} views
+                            {safeNumber(manga.views, 0).toLocaleString()} views
                           </span>
                         </div>
                       </div>
@@ -744,7 +846,7 @@ export default function Home() {
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold line-clamp-1">{m.title}</div>
                     <div className="text-xs text-zinc-400">
-                      {(m.weekViews ?? 0).toLocaleString()} views nesta semana
+                      {safeNumber(m.weekViews, 0).toLocaleString()} views nesta semana
                     </div>
                   </div>
                 </Link>
@@ -756,31 +858,33 @@ export default function Home() {
         <section className="mt-10">
           <h2 className="text-xl font-semibold mb-3">🏆 Top 10 geral</h2>
 
-          {topViews.map((m, idx) => {
-            const cover = proxifyImage(m.cover);
+          <div className="space-y-2">
+            {topViews.map((m, idx) => {
+              const cover = proxifyImage(m.cover);
 
-            return (
-              <Link
-                key={m.id}
-                href={`/manga/${m.id}`}
-                className="flex items-center gap-3 p-2 hover:bg-zinc-800 rounded"
-              >
-                <span className="w-6">{idx + 1}</span>
+              return (
+                <Link
+                  key={m.id}
+                  href={`/manga/${m.id}`}
+                  className="flex items-center gap-3 p-2 hover:bg-zinc-800 rounded"
+                >
+                  <span className="w-6">{idx + 1}</span>
 
-                {cover ? (
-                  <img
-                    src={cover}
-                    alt={m.title}
-                    className="h-10 w-8 object-cover rounded"
-                  />
-                ) : (
-                  <div className="h-10 w-8 bg-zinc-800 rounded" />
-                )}
+                  {cover ? (
+                    <img
+                      src={cover}
+                      alt={m.title}
+                      className="h-10 w-8 object-cover rounded"
+                    />
+                  ) : (
+                    <div className="h-10 w-8 bg-zinc-800 rounded" />
+                  )}
 
-                <span className="line-clamp-1">{m.title}</span>
-              </Link>
-            );
-          })}
+                  <span className="line-clamp-1">{m.title}</span>
+                </Link>
+              );
+            })}
+          </div>
         </section>
 
         <section className="mt-12 xl:hidden">

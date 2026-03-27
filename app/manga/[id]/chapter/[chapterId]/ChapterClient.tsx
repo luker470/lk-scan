@@ -11,6 +11,8 @@ import {
   query,
 } from "firebase/firestore";
 import ReaderPro from "@/components/ReaderPro";
+import Comments from "@/components/Comments";
+import OperatorFloatingChat from "@/components/OperatorFloatingChat";
 import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { proxifyImage } from "@/lib/imgProxy";
@@ -54,8 +56,8 @@ type ChapterDoc = {
 };
 
 function safeNumber(value: unknown, fallback = 0) {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function buildChapterTitle(chapter: ChapterDoc | null) {
@@ -63,29 +65,82 @@ function buildChapterTitle(chapter: ChapterDoc | null) {
 
   if (chapter.title?.trim()) return chapter.title.trim();
 
-  const n = safeNumber(chapter.number, NaN);
-  if (Number.isFinite(n)) return `Capítulo ${n}`;
+  const value = safeNumber(chapter.number, NaN);
+  if (Number.isFinite(value)) return `Capítulo ${value}`;
 
   return "Capítulo";
+}
+
+function normalizePageUrl(item: ChapterPageInput) {
+  if (typeof item === "string") {
+    return item.trim();
+  }
+
+  return String(
+    item?.storageUrl || item?.mirrorUrl || item?.url || item?.src || ""
+  ).trim();
+}
+
+function dedupePages(rawPages: ChapterPageInput[]) {
+  const seen = new Set<string>();
+  const normalized: ChapterPageInput[] = [];
+
+  for (const item of rawPages) {
+    const url = normalizePageUrl(item);
+    if (!url) continue;
+
+    const key = url.toLowerCase();
+    if (seen.has(key)) continue;
+
+    seen.add(key);
+    normalized.push(item);
+  }
+
+  return normalized;
 }
 
 function resolvePages(chapter: ChapterDoc | null): ChapterPageInput[] {
   if (!chapter) return [];
 
-  if (Array.isArray(chapter.pages) && chapter.pages.length > 0) {
-    return chapter.pages;
-  }
+  const source =
+    Array.isArray(chapter.pages) && chapter.pages.length > 0
+      ? chapter.pages
+      : Array.isArray(chapter.images) && chapter.images.length > 0
+      ? chapter.images
+      : [];
 
-  if (Array.isArray(chapter.images) && chapter.images.length > 0) {
-    return chapter.images;
-  }
-
-  return [];
+  return dedupePages(source);
 }
 
 function getChapterPagesCount(chapter: ChapterDoc | null) {
   if (!chapter) return 0;
-  return safeNumber(chapter.pagesCount ?? chapter.pageCount ?? resolvePages(chapter).length, 0);
+  return safeNumber(
+    chapter.pagesCount ?? chapter.pageCount ?? resolvePages(chapter).length,
+    0
+  );
+}
+
+function buildPageDiagnostics(pages: ChapterPageInput[]) {
+  const urls = pages.map(normalizePageUrl).filter(Boolean);
+  const empty = pages.length - urls.length;
+  const duplicates = urls.length - new Set(urls.map((url) => url.toLowerCase())).size;
+  const suspicious = urls.filter((url) => {
+    const lowered = url.toLowerCase();
+    return (
+      lowered.includes("placeholder") ||
+      lowered.includes("blank") ||
+      lowered.endsWith(".gif")
+    );
+  }).length;
+
+  return {
+    total: pages.length,
+    usable: urls.length,
+    empty,
+    duplicates,
+    suspicious,
+    looksBroken: urls.length === 0 || suspicious > 0,
+  };
 }
 
 export default function ChapterClient({
@@ -103,6 +158,7 @@ export default function ChapterClient({
 
   const chapterTitle = useMemo(() => buildChapterTitle(chapter), [chapter]);
   const pages = useMemo(() => resolvePages(chapter), [chapter]);
+  const pageDiagnostics = useMemo(() => buildPageDiagnostics(pages), [pages]);
 
   const orderedChapters = useMemo(() => {
     return [...allChapters].sort((a, b) => {
@@ -110,7 +166,6 @@ export default function ChapterClient({
       const bn = safeNumber(b.number, 0);
 
       if (an !== bn) return an - bn;
-
       return String(a.id).localeCompare(String(b.id));
     });
   }, [allChapters]);
@@ -259,7 +314,8 @@ export default function ChapterClient({
 
   const bannerSrc = proxifyImage(manga?.banner || manga?.cover);
   const pagesCount = getChapterPagesCount(chapter);
-  const descriptionText = manga?.description?.trim() || manga?.synopsis?.trim() || "";
+  const descriptionText =
+    manga?.description?.trim() || manga?.synopsis?.trim() || "";
 
   if (loading) {
     return (
@@ -341,6 +397,18 @@ export default function ChapterClient({
                       {manga.genre}
                     </span>
                   ) : null}
+
+                  {pageDiagnostics.duplicates > 0 ? (
+                    <span className="rounded-full border border-yellow-500/20 bg-yellow-500/10 px-3 py-1 text-yellow-300">
+                      duplicadas removidas: {pageDiagnostics.duplicates}
+                    </span>
+                  ) : null}
+
+                  {pageDiagnostics.looksBroken ? (
+                    <span className="rounded-full border border-red-500/20 bg-red-500/10 px-3 py-1 text-red-300">
+                      capítulo suspeito
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -370,14 +438,30 @@ export default function ChapterClient({
                 {descriptionText}
               </div>
             ) : null}
+
+            {(pageDiagnostics.looksBroken ||
+              pageDiagnostics.empty > 0 ||
+              pageDiagnostics.suspicious > 0) && (
+              <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-4 text-sm text-yellow-200 leading-6">
+                Este capítulo parece ter páginas suspeitas, vazias ou incompletas.
+                O sistema continua exibindo o que foi encontrado, mas esse item deve
+                entrar na trilha de validação/recovery do operador.
+              </div>
+            )}
           </div>
         </section>
 
         <section className="rounded-3xl border border-zinc-800 bg-zinc-900/40 p-3 md:p-4">
-          <ReaderPro
-            pages={pages}
-            storageKey={`lk-reader:${mangaId}:${chapterId}`}
-          />
+          {pages.length > 0 ? (
+            <ReaderPro
+              pages={pages}
+              storageKey={`lk-reader:${mangaId}:${chapterId}`}
+            />
+          ) : (
+            <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-300">
+              Nenhuma página válida foi encontrada para este capítulo.
+            </div>
+          )}
         </section>
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
@@ -414,7 +498,15 @@ export default function ChapterClient({
             </div>
           </div>
         </section>
+
+        <Comments
+          mangaId={mangaId}
+          chapterId={chapterId}
+          title="💬 Comentários do capítulo"
+        />
       </div>
+
+      <OperatorFloatingChat />
     </main>
   );
 }

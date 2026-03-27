@@ -1,4 +1,3 @@
-// app/api/admin/manga/route.ts
 import { NextResponse } from "next/server";
 import { getAdminDb } from "@/lib/firebaseAdmin";
 import { ADMIN_UID } from "@/lib/admin";
@@ -18,6 +17,10 @@ function isValidHttpUrl(url: string) {
   } catch {
     return false;
   }
+}
+
+function safeString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 async function deleteCollectionBatch(
@@ -56,18 +59,16 @@ export async function PATCH(req: Request) {
 
     const body = await req.json().catch(() => null);
 
-    const mangaId = String(body?.mangaId || "").trim();
-    const title = typeof body?.title === "string" ? body.title.trim() : "";
-    const genre = typeof body?.genre === "string" ? body.genre.trim() : "";
-    const cover = typeof body?.cover === "string" ? body.cover.trim() : "";
-    const banner = typeof body?.banner === "string" ? body.banner.trim() : "";
-    const description =
-      typeof body?.description === "string" ? body.description.trim() : "";
-    const status = typeof body?.status === "string" ? body.status.trim() : "";
-    const author = typeof body?.author === "string" ? body.author.trim() : "";
-    const artist = typeof body?.artist === "string" ? body.artist.trim() : "";
-    const sourceUrl =
-      typeof body?.sourceUrl === "string" ? body.sourceUrl.trim() : "";
+    const mangaId = safeString(body?.mangaId);
+    const title = safeString(body?.title);
+    const genre = safeString(body?.genre);
+    const cover = safeString(body?.cover);
+    const banner = safeString(body?.banner);
+    const description = safeString(body?.description);
+    const status = safeString(body?.status);
+    const author = safeString(body?.author);
+    const artist = safeString(body?.artist);
+    const sourceUrl = safeString(body?.sourceUrl);
     const autoSync = Boolean(body?.autoSync);
 
     if (!mangaId) {
@@ -88,16 +89,15 @@ export async function PATCH(req: Request) {
 
     const payload: Record<string, unknown> = {
       updatedAt: new Date(),
+      title,
+      genre,
+      cover,
+      banner,
+      description,
+      status,
+      author,
+      artist,
     };
-
-    if (title) payload.title = title;
-    if (genre) payload.genre = genre;
-    if (cover) payload.cover = cover;
-    if (banner) payload.banner = banner;
-    if (description) payload.description = description;
-    if (status) payload.status = status;
-    if (author) payload.author = author;
-    if (artist) payload.artist = artist;
 
     payload.autoSync = autoSync && !!sourceUrl;
 

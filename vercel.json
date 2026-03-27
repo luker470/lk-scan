@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/mirror?secret=lk_scan_cron_2026_super_seguro",
       "schedule": "15 */8 * * *"
+    },
+    {
+      "path": "/api/cron/operator",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

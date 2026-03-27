@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   collection,
   getDocs,
@@ -40,6 +41,11 @@ function safeText(v: unknown) {
   return typeof v === "string" ? v : "";
 }
 
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function splitGenres(value?: string) {
   return String(value || "")
     .split(",")
@@ -52,7 +58,19 @@ function pad3(n: number) {
 }
 
 function tsSeconds(v: any) {
-  return v?.seconds ?? 0;
+  return v?.seconds ?? v?._seconds ?? 0;
+}
+
+function formatStatus(status?: string) {
+  if (!status) return "";
+  const s = status.toLowerCase();
+
+  if (s === "ongoing") return "Em andamento";
+  if (s === "completed") return "Finalizado";
+  if (s === "hiatus") return "Hiato";
+  if (s === "cancelled") return "Cancelado";
+
+  return status;
 }
 
 const PAGE_SIZE = 24;
@@ -65,6 +83,7 @@ export default function MangaList({
   const [list, setList] = useState<Manga[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
 
   const [qtxt, setQtxt] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -191,6 +210,17 @@ export default function MangaList({
     };
   }, [list]);
 
+  async function handleCopyId(id: string) {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopyStatus(`ID copiado: ${id}`);
+      setTimeout(() => setCopyStatus(""), 1800);
+    } catch {
+      setCopyStatus("Não foi possível copiar o ID.");
+      setTimeout(() => setCopyStatus(""), 1800);
+    }
+  }
+
   if (loading) {
     return <div className="text-zinc-300">Carregando lista...</div>;
   }
@@ -217,15 +247,19 @@ export default function MangaList({
         </button>
       </div>
 
-      <div className="text-[11px] text-zinc-500">
-        Carregados: <b className="text-zinc-200">{list.length}</b> • Mostrando:{" "}
-        <b className="text-zinc-200">{filtered.length}</b>
+      <div className="text-[11px] text-zinc-500 flex flex-wrap gap-2">
+        <span>
+          Carregados: <b className="text-zinc-200">{list.length}</b>
+        </span>
+        <span>
+          Mostrando: <b className="text-zinc-200">{filtered.length}</b>
+        </span>
         {stats.newestId ? (
-          <>
-            {" "}
-            • Mais recente: <span className="text-zinc-300">{stats.newestId}</span>
-          </>
+          <span>
+            Mais recente: <span className="text-zinc-300">{stats.newestId}</span>
+          </span>
         ) : null}
+        {copyStatus ? <span className="text-cyan-300">{copyStatus}</span> : null}
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -233,8 +267,8 @@ export default function MangaList({
           const cover = proxifyImage(m.cover);
           const genres = splitGenres(m.genre);
           const last =
-            typeof m.lastChapterNumber === "number" && m.lastChapterNumber > 0
-              ? pad3(m.lastChapterNumber)
+            safeNumber(m.lastChapterNumber, 0) > 0
+              ? pad3(safeNumber(m.lastChapterNumber, 0))
               : null;
 
           return (
@@ -276,7 +310,7 @@ export default function MangaList({
 
                   {m.status ? (
                     <span className="rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[11px] text-cyan-300">
-                      {m.status}
+                      {formatStatus(m.status)}
                     </span>
                   ) : null}
 
@@ -289,10 +323,10 @@ export default function MangaList({
 
                 <div className="text-xs text-zinc-400 flex flex-wrap gap-x-3 gap-y-1">
                   <span>
-                    Views: <b className="text-zinc-200">{(m.views ?? 0).toLocaleString()}</b>
+                    Views: <b className="text-zinc-200">{safeNumber(m.views, 0).toLocaleString()}</b>
                   </span>
                   <span>
-                    Capítulos: <b className="text-zinc-200">{m.chaptersCount ?? 0}</b>
+                    Capítulos: <b className="text-zinc-200">{safeNumber(m.chaptersCount, 0)}</b>
                   </span>
                   {last ? (
                     <span>
@@ -317,26 +351,21 @@ export default function MangaList({
                   </button>
 
                   <button
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(m.id);
-                      } catch {}
-                    }}
+                    onClick={() => handleCopyId(m.id)}
                     className="rounded-xl border border-zinc-700 px-3 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
                     title="Copiar MangaId"
                   >
                     📋
                   </button>
 
-                  <a
+                  <Link
                     href={`/manga/${m.id}`}
                     target="_blank"
-                    rel="noreferrer"
                     className="rounded-xl border border-zinc-700 px-3 py-2 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition"
                     title="Abrir no site"
                   >
                     🔗
-                  </a>
+                  </Link>
                 </div>
 
                 <div className="text-[11px] text-zinc-500 break-all">ID: {m.id}</div>

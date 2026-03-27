@@ -8,6 +8,8 @@ import {
   getDocs,
   serverTimestamp,
   setDoc,
+  query,
+  orderBy,
   type Firestore,
 } from "firebase/firestore";
 
@@ -15,6 +17,7 @@ export type UserLibraryItem = {
   mangaId: string;
   title: string;
   cover: string;
+  genre?: string;
   slug?: string;
   sourceUrl?: string;
   createdAt?: unknown;
@@ -56,6 +59,7 @@ export async function toggleFavorite(
     mangaId: item.mangaId,
     title: item.title || "",
     cover: item.cover || "",
+    genre: item.genre || "",
     slug: item.slug || "",
     sourceUrl: item.sourceUrl || "",
     createdAt: serverTimestamp(),
@@ -82,6 +86,7 @@ export async function toggleFollowing(
     mangaId: item.mangaId,
     title: item.title || "",
     cover: item.cover || "",
+    genre: item.genre || "",
     slug: item.slug || "",
     sourceUrl: item.sourceUrl || "",
     createdAt: serverTimestamp(),
@@ -92,11 +97,17 @@ export async function toggleFollowing(
 }
 
 export async function listFavorites(db: Firestore, uid: string) {
-  const snap = await getDocs(collection(db, "users", uid, "favorites"));
+  const snap = await getDocs(
+    query(collection(db, "users", uid, "favorites"), orderBy("createdAt", "desc"))
+  ).catch(async () => getDocs(collection(db, "users", uid, "favorites")));
+
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }
 
 export async function listFollowing(db: Firestore, uid: string) {
-  const snap = await getDocs(collection(db, "users", uid, "following"));
+  const snap = await getDocs(
+    query(collection(db, "users", uid, "following"), orderBy("createdAt", "desc"))
+  ).catch(async () => getDocs(collection(db, "users", uid, "following")));
+
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 }

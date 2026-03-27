@@ -13,6 +13,7 @@ import { db } from "@/lib/firebase";
 
 import { useAuth } from "@/context/AuthContext";
 import { isAdmin } from "@/lib/admin";
+
 import CleanupTitlesManager from "./CleanupTitlesManager";
 import DiscoveryAutoImportManager from "./DiscoveryAutoImportManager";
 import SyncStatusBoard from "./SyncStatusBoard";
@@ -21,6 +22,13 @@ import SourceHealthBoard from "./SourceHealthBoard";
 import BackupManager from "./BackupManager";
 import ParserDiagnosticsBoard from "./ParserDiagnosticsBoard";
 import ProductionBoard from "./ProductionBoard";
+import AICommentCenter from "./AICommentCenter";
+import OperatorChat from "./OperatorChat";
+import OperatorDashboard from "./OperatorDashboard";
+import OperatorIncidentsBoard from "./OperatorIncidentsBoard";
+import OperatorReportsBoard from "./OperatorReportsBoard";
+import OperatorChatPanel from "./OperatorChatPanel";
+import OperatorFloatingChat from "@/components/OperatorFloatingChat";
 
 import MangaList from "./MangaList";
 import ImportChapterLinks from "./chapters/ImportChapterLinks";
@@ -37,7 +45,8 @@ type TabKey =
   | "criar"
   | "editar"
   | "importar"
-  | "descobrir";
+  | "descobrir"
+  | "operator";
 
 type MangaStats = {
   totalMangas: number;
@@ -81,8 +90,13 @@ function isValidHttpUrl(url: string) {
   }
 }
 
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
 function tsSeconds(v: any) {
-  return v?.seconds ?? 0;
+  return v?.seconds ?? v?._seconds ?? 0;
 }
 
 function TabButton({
@@ -112,18 +126,87 @@ function StatCard({
   label,
   value,
   loading,
+  hint,
+  tone = "cyan",
 }: {
   label: string;
   value: string | number;
   loading?: boolean;
+  hint?: string;
+  tone?: "cyan" | "emerald" | "yellow" | "red" | "zinc";
 }) {
+  const valueClass =
+    tone === "emerald"
+      ? "text-emerald-300"
+      : tone === "yellow"
+      ? "text-yellow-300"
+      : tone === "red"
+      ? "text-red-300"
+      : tone === "zinc"
+      ? "text-zinc-100"
+      : "text-cyan-400";
+
   return (
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
       <div className="text-sm text-zinc-400">{label}</div>
-      <div className="mt-2 text-3xl font-extrabold text-cyan-400">
+      <div className={`mt-2 text-3xl font-extrabold ${valueClass}`}>
         {loading ? "..." : value}
       </div>
+      {hint ? <div className="mt-2 text-xs text-zinc-500">{hint}</div> : null}
     </div>
+  );
+}
+
+function QuickActionButton({
+  title,
+  subtitle,
+  onClick,
+  tone = "default",
+}: {
+  title: string;
+  subtitle?: string;
+  onClick: () => void;
+  tone?: "default" | "primary" | "operator";
+}) {
+  const cls =
+    tone === "primary"
+      ? "border-cyan-500 bg-cyan-500 text-black hover:bg-cyan-400"
+      : tone === "operator"
+      ? "border-cyan-700 bg-cyan-500/5 text-cyan-200 hover:bg-cyan-500/10"
+      : "border-zinc-700 bg-transparent text-zinc-100 hover:border-cyan-400";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-2xl border p-4 text-left transition ${cls}`}
+    >
+      <div className="font-bold">{title}</div>
+      {subtitle ? (
+        <div className="mt-1 text-xs opacity-80">{subtitle}</div>
+      ) : null}
+    </button>
+  );
+}
+
+function SectionCard({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-cyan-400">{title}</h2>
+        {subtitle ? (
+          <div className="mt-1 text-sm text-zinc-500">{subtitle}</div>
+        ) : null}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -154,9 +237,13 @@ export default function AdminPage() {
   const [autoSync, setAutoSync] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [actionLoading, setActionLoading] = useState<"" | "edit" | "delete">("");
+  const [actionLoading, setActionLoading] = useState<"" | "edit" | "delete">(
+    ""
+  );
   const [statusMessage, setStatusMessage] = useState("");
-  const [statusType, setStatusType] = useState<"success" | "error" | "info">("info");
+  const [statusType, setStatusType] = useState<"success" | "error" | "info">(
+    "info"
+  );
 
   const [mangaId, setMangaId] = useState<string>("");
   const [manualId, setManualId] = useState("");
@@ -170,7 +257,34 @@ export default function AdminPage() {
   const mangaIdToUse = useMemo(() => cleanId(mangaId), [mangaId]);
   const hasSelectedManga = Boolean(mangaIdToUse);
 
-  function showStatus(message: string, type: "success" | "error" | "info" = "info") {
+  const operatorReadiness = useMemo(() => {
+    if (stats.autoSyncCount >= 10) {
+      return {
+        label: "Operação forte",
+        hint: "Boa base para evolução do modo 100% automático.",
+        tone: "emerald" as const,
+      };
+    }
+
+    if (stats.autoSyncCount > 0) {
+      return {
+        label: "Operação em evolução",
+        hint: "A automação já existe, mas ainda pode crescer.",
+        tone: "yellow" as const,
+      };
+    }
+
+    return {
+      label: "Operação inicial",
+      hint: "Ative mais syncs automáticos para acelerar o modo produção.",
+      tone: "red" as const,
+    };
+  }, [stats.autoSyncCount]);
+
+  function showStatus(
+    message: string,
+    type: "success" | "error" | "info" = "info"
+  ) {
     setStatusMessage(message);
     setStatusType(type);
   }
@@ -218,9 +332,14 @@ export default function AdminPage() {
     setStatsLoading(true);
 
     try {
-      const snap = await getDocs(
-        query(collection(db, "mangas"), orderBy("createdAt", "desc"))
-      );
+      let snap;
+      try {
+        snap = await getDocs(
+          query(collection(db, "mangas"), orderBy("createdAt", "desc"))
+        );
+      } catch {
+        snap = await getDocs(collection(db, "mangas"));
+      }
 
       const items = snap.docs.map((d) => ({
         id: d.id,
@@ -233,9 +352,9 @@ export default function AdminPage() {
       let autoSyncCount = 0;
 
       for (const item of items) {
-        totalViews += Number(item.views || 0);
-        totalWeekViews += Number(item.weekViews || 0);
-        totalChapters += Number(item.chaptersCount || 0);
+        totalViews += safeNumber(item.views, 0);
+        totalWeekViews += safeNumber(item.weekViews, 0);
+        totalChapters += safeNumber(item.chaptersCount, 0);
         if (item.autoSync) autoSyncCount++;
       }
 
@@ -247,7 +366,7 @@ export default function AdminPage() {
 
       const topTitles = items
         .slice()
-        .sort((a, b) => Number(b.views || 0) - Number(a.views || 0))
+        .sort((a, b) => safeNumber(b.views, 0) - safeNumber(a.views, 0))
         .slice(0, 5)
         .map((item) => item.title || "Sem título");
 
@@ -280,6 +399,7 @@ export default function AdminPage() {
     if (!authLoading && user && isAdmin(user.uid)) {
       loadStats();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, user]);
 
   if (authLoading) {
@@ -342,9 +462,7 @@ export default function AdminPage() {
       return;
     }
 
-    const firestore = db;
-
-    if (!firestore) {
+    if (!db) {
       showStatus("Firebase não inicializado.", "error");
       return;
     }
@@ -352,7 +470,7 @@ export default function AdminPage() {
     setLoading(true);
 
     try {
-      const created = await addDoc(collection(firestore, "mangas"), {
+      const created = await addDoc(collection(db, "mangas"), {
         title: t,
         genre: g,
         cover: c,
@@ -529,12 +647,17 @@ export default function AdminPage() {
                 LK-Scan Admin Pro
               </h1>
               <div className="mt-2 text-sm text-zinc-400">
-                Manga em uso:{" "}
+                Mangá em uso:{" "}
                 {hasSelectedManga ? (
-                  <span className="text-cyan-300 font-semibold">{mangaIdToUse}</span>
+                  <span className="text-cyan-300 font-semibold">
+                    {mangaIdToUse}
+                  </span>
                 ) : (
                   <span>nenhum selecionado</span>
                 )}
+              </div>
+              <div className="mt-2 text-xs text-zinc-500 break-all">
+                Admin: {adminLabel}
               </div>
             </div>
 
@@ -544,6 +667,13 @@ export default function AdminPage() {
                 className="px-4 py-2 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition"
               >
                 Dashboard
+              </button>
+
+              <button
+                onClick={() => setTab("operator")}
+                className="px-4 py-2 rounded-xl border border-cyan-700 text-cyan-200 hover:bg-cyan-500/10 transition"
+              >
+                Operator Center
               </button>
 
               {hasSelectedManga ? (
@@ -588,8 +718,17 @@ export default function AdminPage() {
 
         <section className="rounded-2xl border border-zinc-800 bg-zinc-900/50 p-4">
           <div className="flex gap-2 overflow-x-auto pb-1">
-            <TabButton active={tab === "dashboard"} onClick={() => setTab("dashboard")}>
+            <TabButton
+              active={tab === "dashboard"}
+              onClick={() => setTab("dashboard")}
+            >
               📊 Dashboard
+            </TabButton>
+            <TabButton
+              active={tab === "operator"}
+              onClick={() => setTab("operator")}
+            >
+              🧠 Operator
             </TabButton>
             <TabButton active={tab === "usar"} onClick={() => setTab("usar")}>
               📚 Selecionar mangá
@@ -597,13 +736,22 @@ export default function AdminPage() {
             <TabButton active={tab === "criar"} onClick={() => setTab("criar")}>
               ➕ Criar mangá
             </TabButton>
-            <TabButton active={tab === "editar"} onClick={() => setTab("editar")}>
+            <TabButton
+              active={tab === "editar"}
+              onClick={() => setTab("editar")}
+            >
               ✏️ Editar / Excluir
             </TabButton>
-            <TabButton active={tab === "importar"} onClick={() => setTab("importar")}>
+            <TabButton
+              active={tab === "importar"}
+              onClick={() => setTab("importar")}
+            >
               📥 Importar capítulos
             </TabButton>
-            <TabButton active={tab === "descobrir"} onClick={() => setTab("descobrir")}>
+            <TabButton
+              active={tab === "descobrir"}
+              onClick={() => setTab("descobrir")}
+            >
               🔎 Descobrir
             </TabButton>
           </div>
@@ -616,74 +764,81 @@ export default function AdminPage() {
                 label="Mangás cadastrados"
                 value={stats.totalMangas}
                 loading={statsLoading}
+                hint="Base total do catálogo"
               />
               <StatCard
                 label="Capítulos totais"
                 value={stats.totalChapters}
                 loading={statsLoading}
+                hint="Capítulos indexados no banco"
               />
               <StatCard
                 label="Views totais"
                 value={stats.totalViews.toLocaleString()}
                 loading={statsLoading}
+                hint="Tráfego histórico acumulado"
+                tone="zinc"
               />
               <StatCard
                 label="Views da semana"
                 value={stats.totalWeekViews.toLocaleString()}
                 loading={statsLoading}
+                hint="Movimento recente do site"
               />
               <StatCard
                 label="Auto sync ativos"
                 value={stats.autoSyncCount}
                 loading={statsLoading}
+                hint={operatorReadiness.hint}
+                tone={operatorReadiness.tone}
               />
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">⚡ Ações rápidas</h2>
-
+              <SectionCard
+                title="⚡ Ações rápidas"
+                subtitle="Atalhos para fluxo operacional diário"
+              >
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <button
+                  <QuickActionButton
+                    title="Criar novo mangá"
+                    subtitle="Cadastrar obra e seguir para importação"
                     onClick={() => setTab("criar")}
-                    className="rounded-xl bg-cyan-500 p-4 text-left font-bold text-black hover:bg-cyan-400 transition"
-                  >
-                    Criar novo mangá
-                  </button>
-
-                  <button
+                    tone="primary"
+                  />
+                  <QuickActionButton
+                    title="Escolher mangá"
+                    subtitle="Selecionar obra para editar ou importar"
                     onClick={() => setTab("usar")}
-                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition"
-                  >
-                    Escolher mangá
-                  </button>
-
-                  <button
+                  />
+                  <QuickActionButton
+                    title="Editar informações"
+                    subtitle="Atualizar dados da obra selecionada"
                     onClick={() => setTab("editar")}
-                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition"
-                  >
-                    Editar informações
-                  </button>
-
-                  <button
+                  />
+                  <QuickActionButton
+                    title="Importar capítulos"
+                    subtitle="Manual, em lote ou automático"
                     onClick={() => setTab("importar")}
-                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition"
-                  >
-                    Importar capítulos
-                  </button>
-
-                  <button
+                  />
+                  <QuickActionButton
+                    title="Descoberta automática"
+                    subtitle="Expandir catálogo com discovery"
                     onClick={() => setTab("descobrir")}
-                    className="rounded-xl border border-zinc-700 p-4 text-left hover:border-cyan-400 transition sm:col-span-2"
-                  >
-                    Descoberta automática
-                  </button>
+                  />
+                  <QuickActionButton
+                    title="Abrir central do Operator"
+                    subtitle="Incidentes, relatórios, chat e IA"
+                    onClick={() => setTab("operator")}
+                    tone="operator"
+                  />
                 </div>
-              </div>
+              </SectionCard>
 
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">🧠 Estado atual</h2>
-
+              <SectionCard
+                title="🧠 Estado atual"
+                subtitle="Contexto administrativo do painel"
+              >
                 <div className="space-y-3 text-sm">
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
                     <span className="text-zinc-400">Mangá selecionado: </span>
@@ -703,16 +858,29 @@ export default function AdminPage() {
                       {adminLabel}
                     </span>
                   </div>
+
+                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
+                    <span className="text-zinc-400">Leitura operacional: </span>
+                    <span className="text-zinc-200 font-semibold">
+                      {operatorReadiness.label}
+                    </span>
+                  </div>
+
+                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
+                    <span className="text-zinc-400">Diagnóstico: </span>
+                    <span className="text-zinc-200 font-semibold">
+                      {operatorReadiness.hint}
+                    </span>
+                  </div>
                 </div>
-              </div>
+              </SectionCard>
             </div>
 
             <div className="grid gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">
-                  🆕 Últimos atualizados
-                </h2>
-
+              <SectionCard
+                title="🆕 Últimos atualizados"
+                subtitle="Obras com atividade recente"
+              >
                 <div className="space-y-2">
                   {stats.latestTitles.length === 0 ? (
                     <div className="text-sm text-zinc-500">Sem dados.</div>
@@ -727,11 +895,12 @@ export default function AdminPage() {
                     ))
                   )}
                 </div>
-              </div>
+              </SectionCard>
 
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-                <h2 className="text-lg font-bold text-cyan-400 mb-4">🔥 Mais vistos</h2>
-
+              <SectionCard
+                title="🔥 Mais vistos"
+                subtitle="Ranking interno do catálogo"
+              >
                 <div className="space-y-2">
                   {stats.topTitles.length === 0 ? (
                     <div className="text-sm text-zinc-500">Sem dados.</div>
@@ -746,27 +915,74 @@ export default function AdminPage() {
                     ))
                   )}
                 </div>
-              </div>
+              </SectionCard>
             </div>
 
             <ProductionBoard />
-            <AdminPingTest />
-            <AutoSyncManager />
-            <CleanupTitlesManager />
-            <DiscoveryAutoImportManager />
-            <SyncStatusBoard />
-            <AutomationManagerPanel />
-            <SourceHealthBoard />
-            <BackupManager />
-            <MirrorManager />
-            <ParserDiagnosticsBoard />
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <AdminPingTest />
+              <AutoSyncManager />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <CleanupTitlesManager />
+              <DiscoveryAutoImportManager />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <SyncStatusBoard />
+              <AutomationManagerPanel />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <SourceHealthBoard />
+              <ParserDiagnosticsBoard />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <BackupManager />
+              <MirrorManager />
+            </div>
+          </section>
+        )}
+
+        {tab === "operator" && (
+          <section className="space-y-6">
+            <div className="rounded-3xl border border-cyan-900 bg-cyan-500/5 p-5">
+              <div className="text-sm text-cyan-300">Central operacional</div>
+              <h2 className="mt-1 text-2xl font-extrabold text-cyan-400">
+                LK AI Operator Center
+              </h2>
+              <div className="mt-2 text-sm text-zinc-400">
+                Aqui fica a leitura viva do site: saúde, incidentes,
+                relatórios, comentários e conversa operacional.
+              </div>
+            </div>
+
+            <OperatorDashboard />
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <OperatorIncidentsBoard />
+              <OperatorReportsBoard />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+              <OperatorChat />
+              <OperatorChatPanel />
+            </div>
+
+            <AICommentCenter />
+            <OperatorFloatingChat />
           </section>
         )}
 
         {tab === "usar" && (
           <section className="space-y-6">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
-              <h2 className="text-xl font-bold text-cyan-400">🔎 Selecionar mangá</h2>
+              <h2 className="text-xl font-bold text-cyan-400">
+                🔎 Selecionar mangá
+              </h2>
 
               <div className="flex flex-col md:flex-row gap-3">
                 <input
@@ -801,7 +1017,9 @@ export default function AdminPage() {
         {tab === "criar" && (
           <section className="grid gap-6 lg:grid-cols-[1fr_320px]">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
-              <h2 className="text-xl font-bold text-cyan-400">➕ Criar mangá</h2>
+              <h2 className="text-xl font-bold text-cyan-400">
+                ➕ Criar mangá
+              </h2>
 
               <div className="grid gap-4">
                 <label className="space-y-1">
@@ -914,7 +1132,9 @@ export default function AdminPage() {
             </div>
 
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-              <h2 className="text-lg font-bold text-cyan-400 mb-4">👁 Prévia</h2>
+              <h2 className="text-lg font-bold text-cyan-400 mb-4">
+                👁 Prévia
+              </h2>
 
               <div className="rounded-2xl overflow-hidden border border-zinc-800 bg-black/30">
                 {previewBanner || previewCover ? (
@@ -938,9 +1158,15 @@ export default function AdminPage() {
                     />
                   ) : null}
 
-                  <div className="font-bold text-lg">{title || "Título do mangá"}</div>
-                  <div className="text-sm text-zinc-400">{genre || "Gênero"}</div>
-                  <div className="text-xs text-zinc-500">{status || "Status"}</div>
+                  <div className="font-bold text-lg">
+                    {title || "Título do mangá"}
+                  </div>
+                  <div className="text-sm text-zinc-400">
+                    {genre || "Gênero"}
+                  </div>
+                  <div className="text-xs text-zinc-500">
+                    {status || "Status"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -950,7 +1176,9 @@ export default function AdminPage() {
         {tab === "editar" && (
           <section className="grid gap-6 lg:grid-cols-[1fr_320px]">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-4">
-              <h2 className="text-xl font-bold text-cyan-400">✏️ Editar mangá</h2>
+              <h2 className="text-xl font-bold text-cyan-400">
+                ✏️ Editar mangá
+              </h2>
 
               {!hasSelectedManga ? (
                 <div className="rounded-xl border border-zinc-800 bg-black/30 p-4 text-zinc-400">
@@ -1057,7 +1285,9 @@ export default function AdminPage() {
                       disabled={actionLoading === "edit"}
                       className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition disabled:opacity-50"
                     >
-                      {actionLoading === "edit" ? "Salvando..." : "Salvar alterações"}
+                      {actionLoading === "edit"
+                        ? "Salvando..."
+                        : "Salvar alterações"}
                     </button>
 
                     <button
@@ -1065,7 +1295,9 @@ export default function AdminPage() {
                       disabled={actionLoading === "delete"}
                       className="px-5 py-3 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition disabled:opacity-50"
                     >
-                      {actionLoading === "delete" ? "Excluindo..." : "Excluir mangá"}
+                      {actionLoading === "delete"
+                        ? "Excluindo..."
+                        : "Excluir mangá"}
                     </button>
                   </div>
                 </>
@@ -1073,7 +1305,9 @@ export default function AdminPage() {
             </div>
 
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-              <h2 className="text-lg font-bold text-cyan-400 mb-4">📌 Seleção atual</h2>
+              <h2 className="text-lg font-bold text-cyan-400 mb-4">
+                📌 Seleção atual
+              </h2>
 
               <div className="space-y-3 text-sm">
                 <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
@@ -1151,8 +1385,9 @@ export default function AdminPage() {
         )}
 
         {tab === "descobrir" && (
-          <section>
+          <section className="space-y-6">
             <DiscoveryManager />
+            <OperatorFloatingChat />
           </section>
         )}
       </div>

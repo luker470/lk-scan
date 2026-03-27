@@ -17,6 +17,7 @@ import { db } from "@/lib/firebase";
 import { useAuth } from "@/context/AuthContext";
 import { getLevelFromXp } from "@/lib/levels";
 import { getVipBadge } from "@/lib/titles";
+import { proxifyImage } from "@/lib/imgProxy";
 
 type UserProfile = {
   displayName?: string;
@@ -39,6 +40,7 @@ type UserProfile = {
   preferredReaderMode?: "fitWidth" | "fitHeight" | "paged";
   theme?: "dark" | "light" | "system";
   createdAt?: any;
+  updatedAt?: any;
 };
 
 type HistoryItem = {
@@ -58,10 +60,13 @@ type FavoriteItem = {
   genre?: string;
 };
 
-function proxifyImage(url?: string) {
-  if (!url) return "";
-  return `/api/img?url=${encodeURIComponent(url)}`;
-}
+type FollowingItem = {
+  id: string;
+  mangaId: string;
+  title: string;
+  cover?: string;
+  genre?: string;
+};
 
 export default function ProfilePage() {
   const { user, loading } = useAuth();
@@ -80,10 +85,13 @@ export default function ProfilePage() {
 
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [favoriteItems, setFavoriteItems] = useState<FavoriteItem[]>([]);
+  const [followingItems, setFollowingItems] = useState<FollowingItem[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
+
     async function load() {
-      if (!user?.uid) {
+      if (!user?.uid || !db) {
         setPageLoading(false);
         return;
       }
@@ -92,7 +100,7 @@ export default function ProfilePage() {
         const userSnap = await getDoc(doc(db, "users", user.uid));
         const userData = userSnap.data() as UserProfile | undefined;
 
-        if (userData) {
+        if (userData && !cancelled) {
           setProfile(userData);
           setDisplayName(userData.displayName || "");
           setBio(userData.bio || "");
@@ -102,39 +110,56 @@ export default function ProfilePage() {
           setTheme(userData.theme || "dark");
         }
 
-        const historySnap = await getDocs(
-          query(
-            collection(db, "users", user.uid, "history"),
-            orderBy("updatedAt", "desc"),
-            limit(4)
-          )
-        );
+        const [historySnap, favoritesSnap, followingSnap] = await Promise.all([
+          getDocs(
+            query(
+              collection(db, "users", user.uid, "history"),
+              orderBy("updatedAt", "desc"),
+              limit(4)
+            )
+          ).catch(async () =>
+            getDocs(query(collection(db, "users", user.uid, "history"), limit(4)))
+          ),
+          getDocs(query(collection(db, "users", user.uid, "favorites"), limit(4))),
+          getDocs(query(collection(db, "users", user.uid, "following"), limit(4))),
+        ]);
 
-        setHistoryItems(
-          historySnap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<HistoryItem, "id">),
-          }))
-        );
+        if (!cancelled) {
+          setHistoryItems(
+            historySnap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<HistoryItem, "id">),
+            }))
+          );
 
-        const favoritesSnap = await getDocs(
-          query(collection(db, "users", user.uid, "favorites"), limit(4))
-        );
+          setFavoriteItems(
+            favoritesSnap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<FavoriteItem, "id">),
+            }))
+          );
 
-        setFavoriteItems(
-          favoritesSnap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<FavoriteItem, "id">),
-          }))
-        );
+          setFollowingItems(
+            followingSnap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<FollowingItem, "id">),
+            }))
+          );
+        }
       } catch (e) {
         console.error(e);
       } finally {
-        setPageLoading(false);
+        if (!cancelled) {
+          setPageLoading(false);
+        }
       }
     }
 
     if (!loading) load();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user?.uid, loading]);
 
   const levelData = useMemo(() => {
@@ -142,7 +167,7 @@ export default function ProfilePage() {
   }, [profile?.xpTotal]);
 
   async function handleSave() {
-    if (!user?.uid) return;
+    if (!user?.uid || !db) return;
 
     setSaving(true);
 
@@ -170,8 +195,6 @@ export default function ProfilePage() {
         preferredReaderMode,
         theme,
       }));
-
-      alert("Perfil atualizado.");
     } catch (e) {
       console.error(e);
       alert("Erro ao salvar perfil.");
@@ -291,8 +314,8 @@ export default function ProfilePage() {
                 </div>
 
                 <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
-                  <div className="text-xl font-extrabold">{profile?.commentsCount || 0}</div>
-                  <div className="text-[11px] text-zinc-500">Comentários</div>
+                  <div className="text-xl font-extrabold">{followingItems.length}</div>
+                  <div className="text-[11px] text-zinc-500">Seguindo</div>
                 </div>
               </div>
             </div>
@@ -475,6 +498,56 @@ export default function ProfilePage() {
 
                         <div className="min-w-0 flex-1">
                           <div className="font-semibold line-clamp-1 group-hover:text-pink-300 transition">
+                            {item.title}
+                          </div>
+                          <div className="text-sm text-zinc-400 line-clamp-1 mt-1">
+                            {item.genre || "Sem gênero"}
+                          </div>
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold text-cyan-400">🔔 Seguindo</h2>
+                <Link href="/following" className="text-sm text-cyan-300 hover:text-cyan-200">
+                  Ver tudo
+                </Link>
+              </div>
+
+              {followingItems.length === 0 ? (
+                <div className="rounded-xl border border-zinc-800 bg-black/30 p-4 text-zinc-500">
+                  Você ainda não está seguindo nenhum mangá.
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  {followingItems.map((item) => {
+                    const cover = proxifyImage(item.cover);
+
+                    return (
+                      <Link
+                        key={item.id}
+                        href={`/manga/${item.id}`}
+                        className="group rounded-2xl border border-zinc-800 bg-black/20 p-4 flex gap-3 hover:border-cyan-400 transition"
+                      >
+                        {cover ? (
+                          <img
+                            src={cover}
+                            alt={item.title}
+                            className="h-24 w-20 rounded-xl object-cover shrink-0"
+                          />
+                        ) : (
+                          <div className="h-24 w-20 rounded-xl bg-zinc-800 shrink-0 flex items-center justify-center text-xs text-zinc-500">
+                            Sem capa
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1">
+                          <div className="font-semibold line-clamp-1 group-hover:text-cyan-300 transition">
                             {item.title}
                           </div>
                           <div className="text-sm text-zinc-400 line-clamp-1 mt-1">
