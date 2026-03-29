@@ -9,6 +9,10 @@ import {
   createOperatorReport,
   persistOperatorReport,
 } from "@/lib/operatorReports";
+import {
+  storeOperatorMemory,
+  upsertRecurringProblem,
+} from "@/lib/operatorMemory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,6 +22,11 @@ const CHAT_DOC_ID = "operatorChat";
 const CHAT_MESSAGES_SUBCOLLECTION = "messages";
 const ACTIONS_DOC_ID = "actions";
 const ACTIONS_ITEMS_SUBCOLLECTION = "items";
+
+const DEFAULT_GET_LIMIT = 50;
+const MAX_GET_LIMIT = 100;
+const DEFAULT_RETURN_LIMIT = 50;
+const MAX_MESSAGE_CONTENT = 4000;
 
 type ChatRole = "user" | "assistant" | "system";
 
@@ -39,8 +48,27 @@ function isAuthed(req: Request) {
   return req.headers.get("x-user-id") === ADMIN_UID;
 }
 
+function noStoreJson(body: Record<string, unknown>, status = 200) {
+  return new NextResponse(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+      "Surrogate-Control": "no-store",
+    },
+  });
+}
+
 function normalizeText(value: unknown) {
   return String(value ?? "").trim();
+}
+
+function compactText(value: unknown, max = 220) {
+  const text = normalizeText(value).replace(/\s+/g, " ");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
 }
 
 function safeNumber(value: string | null, fallback: number) {
@@ -99,6 +127,10 @@ function serializeValue(value: any): any {
   return value;
 }
 
+function sanitizeMeta(meta?: Record<string, unknown>) {
+  return serializeValue(meta || {}) as Record<string, unknown>;
+}
+
 function buildChatDocRef(db: FirebaseFirestore.Firestore) {
   return db.collection(SYSTEM_COLLECTION).doc(CHAT_DOC_ID);
 }
@@ -124,12 +156,12 @@ async function saveMessage(
   await ensureChatRoot(db);
 
   const now = new Date();
-  const cleanContent = normalizeText(payload.content);
+  const cleanContent = compactText(payload.content, MAX_MESSAGE_CONTENT);
 
   const ref = await buildMessagesRef(db).add({
     role: payload.role,
     content: cleanContent,
-    meta: payload.meta || {},
+    meta: sanitizeMeta(payload.meta),
     createdAt: now,
     updatedAt: now,
   });
@@ -150,9 +182,9 @@ async function saveMessage(
 
 async function listMessages(
   db: FirebaseFirestore.Firestore,
-  limit = 50
+  limit = DEFAULT_GET_LIMIT
 ) {
-  const finalLimit = clamp(limit, 1, 100);
+  const finalLimit = clamp(limit, 1, MAX_GET_LIMIT);
 
   const snap = await buildMessagesRef(db)
     .orderBy("createdAt", "desc")
@@ -225,9 +257,48 @@ async function registerAction(
       type: "operator-chat",
       status,
       message,
-      meta: meta || {},
+      meta: sanitizeMeta(meta),
       createdAt: new Date(),
     });
+}
+
+async function createIncident(
+  db: FirebaseFirestore.Firestore,
+  title: string,
+  severity: "warning" | "high" | "critical",
+  meta?: Record<string, unknown>,
+  type = "operator"
+) {
+  const existing = await db
+    .collection(SYSTEM_COLLECTION)
+    .doc("incidents")
+    .collection("items")
+    .where("title", "==", title)
+    .where("type", "==", type)
+    .where("resolved", "==", false)
+    .limit(1)
+    .get()
+    .catch(() => null);
+
+  if (existing && !existing.empty) {
+    return { ok: true as const, created: false as const };
+  }
+
+  const ref = await db
+    .collection(SYSTEM_COLLECTION)
+    .doc("incidents")
+    .collection("items")
+    .add({
+      title,
+      type,
+      severity,
+      resolved: false,
+      meta: sanitizeMeta(meta),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+  return { ok: true as const, created: true as const, id: ref.id };
 }
 
 async function runChatAction(
@@ -294,11 +365,33 @@ async function runChatAction(
   return null;
 }
 
+function normalizeQuestion(body: any) {
+  return normalizeText(body?.message || body?.question);
+}
+
+function buildGetPayload(status: any, messages: any[]) {
+  return {
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    messages,
+    status,
+    center: status.center || null,
+    queue: status.queue || null,
+    queuePreview: status.queuePreview || [],
+    commentsAi: (status as any).commentsAi || null,
+    incidents: status.latestIncidents || [],
+    reports: status.latestReports || [],
+    actions: status.latestActions || [],
+    memoryInsights: status.memoryInsights || null,
+    recommendations: status.recommendations || [],
+  };
+}
+
 export async function GET(req: Request) {
   if (!isAuthed(req)) {
-    return NextResponse.json(
+    return noStoreJson(
       { ok: false, error: "Unauthorized" },
-      { status: 401 }
+      401
     );
   }
 
@@ -306,49 +399,37 @@ export async function GET(req: Request) {
     const db = getAdminDb();
 
     if (!db) {
-      return NextResponse.json(
+      return noStoreJson(
         { ok: false, error: "Firebase Admin não configurado." },
-        { status: 500 }
+        500
       );
     }
 
     const { searchParams } = new URL(req.url);
-    const limit = safeNumber(searchParams.get("limit"), 50);
+    const limit = safeNumber(searchParams.get("limit"), DEFAULT_GET_LIMIT);
 
     const [messages, status] = await Promise.all([
       listMessages(db, limit),
       buildOperatorStatus(db),
     ]);
 
-    return NextResponse.json({
-      ok: true,
-      generatedAt: new Date().toISOString(),
-      messages,
-      status,
-      center: status.center || null,
-      queue: status.queue || null,
-      queuePreview: status.queuePreview || [],
-      commentsAi: (status as any).commentsAi || null,
-      incidents: status.latestIncidents || [],
-      reports: status.latestReports || [],
-      actions: status.latestActions || [],
-    });
+    return noStoreJson(buildGetPayload(status, messages), 200);
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "Internal error";
 
-    return NextResponse.json(
+    return noStoreJson(
       { ok: false, error: message },
-      { status: 500 }
+      500
     );
   }
 }
 
 export async function POST(req: Request) {
   if (!isAuthed(req)) {
-    return NextResponse.json(
+    return noStoreJson(
       { ok: false, error: "Unauthorized" },
-      { status: 401 }
+      401
     );
   }
 
@@ -356,9 +437,9 @@ export async function POST(req: Request) {
     const db = getAdminDb();
 
     if (!db) {
-      return NextResponse.json(
+      return noStoreJson(
         { ok: false, error: "Firebase Admin não configurado." },
-        { status: 500 }
+        500
       );
     }
 
@@ -374,13 +455,20 @@ export async function POST(req: Request) {
         meta: { removed, action: "clear" },
       });
 
+      await registerAction(
+        db,
+        "success",
+        "Histórico do Operator Chat foi limpo.",
+        { removed }
+      );
+
       const status = await buildOperatorStatus(db);
 
-      return NextResponse.json({
+      return noStoreJson({
         ok: true,
         cleared: true,
         removed,
-        messages: await listMessages(db, 50),
+        messages: await listMessages(db, DEFAULT_RETURN_LIMIT),
         status,
       });
     }
@@ -410,24 +498,59 @@ export async function POST(req: Request) {
           }
         );
 
+        await storeOperatorMemory(db, {
+          type: "operator-chat-action",
+          success: result.ok,
+          impactScore: result.ok ? 6 : -6,
+          title: `Ação executada no chat: ${action}`,
+          summary: result.message,
+          context: {
+            action,
+            result: serializeValue(result.result),
+          },
+        }).catch(() => null);
+
+        if (!result.ok) {
+          await createIncident(
+            db,
+            `Operator Chat action falhou: ${action}`,
+            "warning",
+            {
+              action,
+              result: serializeValue(result.result),
+            },
+            "operator"
+          );
+
+          await upsertRecurringProblem(db, {
+            key: `chat-action::failure::${action}`,
+            title: `Falhas recorrentes na ação do chat: ${action}`,
+            type: "operator",
+            severity: "warning",
+            meta: {
+              action,
+            },
+          }).catch(() => null);
+        }
+
         const status = await buildOperatorStatus(db);
 
-        return NextResponse.json({
+        return noStoreJson({
           ok: true,
           executedAction: action,
           actionResult: result,
-          messages: await listMessages(db, 50),
+          messages: await listMessages(db, DEFAULT_RETURN_LIMIT),
           status,
         });
       }
     }
 
-    const question = normalizeText(body?.message || body?.question);
+    const question = normalizeQuestion(body);
 
     if (!question) {
-      return NextResponse.json(
+      return noStoreJson(
         { ok: false, error: "Mensagem vazia." },
-        { status: 400 }
+        400
       );
     }
 
@@ -480,14 +603,26 @@ export async function POST(req: Request) {
       "success",
       "Pergunta respondida pelo Operator Chat.",
       {
-        question,
+        question: compactText(question, 300),
         health: status.health || "",
         queue: serializeValue(status.queue || {}),
         commentsAi: serializeValue((status as any).commentsAi || {}),
       }
     );
 
-    return NextResponse.json({
+    await storeOperatorMemory(db, {
+      type: "operator-chat-question",
+      success: true,
+      impactScore: 4,
+      title: "Pergunta respondida pelo Operator Chat",
+      summary: compactText(question, 220),
+      context: {
+        health: status.health || "",
+        generatedAt: status.generatedAt || "",
+      },
+    }).catch(() => null);
+
+    return noStoreJson({
       ok: true,
       reply: {
         answer: answer.answer,
@@ -495,16 +630,52 @@ export async function POST(req: Request) {
         warnings: answer.warnings || [],
         recommendations: answer.recommendations || [],
       },
-      messages: await listMessages(db, 50),
+      messages: await listMessages(db, DEFAULT_RETURN_LIMIT),
       status,
     });
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "Internal error";
 
-    return NextResponse.json(
+    try {
+      const db = getAdminDb();
+
+      if (db) {
+        await registerAction(
+          db,
+          "error",
+          "Falha ao processar requisição do Operator Chat.",
+          {
+            error: message,
+          }
+        );
+
+        await storeOperatorMemory(db, {
+          type: "operator-chat-error",
+          success: false,
+          impactScore: -8,
+          title: "Falha no Operator Chat",
+          summary: message,
+          context: {},
+        }).catch(() => null);
+
+        await upsertRecurringProblem(db, {
+          key: "chat::fatal-error",
+          title: "Falhas fatais no Operator Chat",
+          type: "operator",
+          severity: "high",
+          meta: {
+            error: message,
+          },
+        }).catch(() => null);
+      }
+    } catch (nested) {
+      console.error("Erro ao registrar falha do chat:", nested);
+    }
+
+    return noStoreJson(
       { ok: false, error: message },
-      { status: 500 }
+      500
     );
   }
 }

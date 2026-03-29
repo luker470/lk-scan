@@ -22,6 +22,21 @@ import {
   validateSingleChapter,
 } from "@/lib/operatorRecovery";
 import { syncSingleManga } from "@/lib/autoSync";
+import {
+  generateOperatorIdeas,
+  autoCreateIdeas,
+} from "@/lib/operatorCreative";
+import {
+  storeOperatorMemory,
+  registerExecutionMemory,
+  registerSourceOutcome,
+  registerIncidentsSeen,
+  updateBehaviorMemory,
+  buildOperatorMemoryInsights,
+  upsertRecurringProblem,
+  appendOperatorMemoryEvent,
+} from "@/lib/operatorMemory";
+import { buildLearningInsights } from "@/lib/operatorLearningEngine";
 import { discoverAndAutoImportFromSource } from "@/lib/discoveryAutoImport";
 import type { DiscoverySourceKey } from "@/lib/discovery";
 import type {
@@ -32,6 +47,10 @@ import type {
   OperatorLearningScore,
   OperatorMetrics,
 } from "@/lib/operatorTypes";
+import {
+  buildAutonomousDecision,
+  applyAutonomousDecision,
+} from "@/lib/operatorAutonomyEngine";
 
 type QueueProcessResult = {
   ok: boolean;
@@ -42,14 +61,69 @@ type QueueProcessResult = {
   result?: unknown;
 };
 
-function overallHealth(
-  warningCount: number,
-  criticalCount: number,
-  brokenChapters: number
-): OperatorHealth {
-  if (criticalCount > 0 || brokenChapters > 30) return "critical";
-  if (warningCount > 0 || brokenChapters > 0) return "warning";
-  return "healthy";
+function normalizeText(value: unknown) {
+  return String(value ?? "").trim();
+}
+
+function safeNumber(value: unknown, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function serializeValue(value: any): any {
+  if (value == null) return value;
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value?.toDate === "function") {
+    try {
+      const d = value.toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) {
+        return d.toISOString();
+      }
+    } catch {}
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(serializeValue);
+  }
+
+  if (typeof value === "object") {
+    const out: Record<string, any> = {};
+    for (const [key, val] of Object.entries(value)) {
+      out[key] = serializeValue(val);
+    }
+    return out;
+  }
+
+  return value;
+}
+
+function dedupeLines(items: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const item of items) {
+    const text = normalizeText(item);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+
+  return out;
+}
+
+function hostFromValue(value: unknown) {
+  const raw = normalizeText(value);
+  if (!raw) return "";
+
+  try {
+    return new URL(raw).hostname.toLowerCase();
+  } catch {
+    return raw.toLowerCase();
+  }
 }
 
 function emptyMetrics(): OperatorMetrics {
@@ -90,39 +164,130 @@ function autoImportNotHealthy(metrics: OperatorMetrics) {
   );
 }
 
-function normalizeText(value: unknown) {
-  return String(value ?? "").trim();
+function computeHealth(params: {
+  metrics: OperatorMetrics;
+  queue?: {
+    queued?: number;
+    error?: number;
+    critical?: number;
+  };
+  unresolvedIncidents?: number;
+}) {
+  const broken = safeNumber(params.metrics.totalBrokenChapters, 0);
+  const criticalSources = safeNumber(params.metrics.sourcesCritical, 0);
+  const warningSources = safeNumber(params.metrics.sourcesWarning, 0);
+  const queueQueued = safeNumber(params.queue?.queued, 0);
+  const queueError = safeNumber(params.queue?.error, 0);
+  const queueCritical = safeNumber(params.queue?.critical, 0);
+  const unresolvedIncidents = safeNumber(params.unresolvedIncidents, 0);
+
+  if (
+    criticalSources > 0 ||
+    broken > 30 ||
+    queueCritical > 0 ||
+    queueError > 0 ||
+    unresolvedIncidents >= 8
+  ) {
+    return "critical" as OperatorHealth;
+  }
+
+  if (
+    warningSources > 0 ||
+    broken > 0 ||
+    queueQueued >= 10 ||
+    unresolvedIncidents > 0
+  ) {
+    return "warning" as OperatorHealth;
+  }
+
+  return "healthy" as OperatorHealth;
 }
 
-function serializeValue(value: any): any {
-  if (value == null) return value;
+function countQueueRunProcessed(queueRun: QueueProcessResult[]) {
+  return Array.isArray(queueRun)
+    ? queueRun.filter((item) => item.processed).length
+    : 0;
+}
 
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
+function summarizeQueueRun(queueRun: QueueProcessResult[]) {
+  const summary = {
+    processed: 0,
+    ok: 0,
+    failed: 0,
+    recoverySuccess: 0,
+    recoveryFailed: 0,
+    validationSuccess: 0,
+    validationFailed: 0,
+    reimportSuccess: 0,
+    reimportFailed: 0,
+    syncSuccess: 0,
+    syncFailed: 0,
+    discoverySuccess: 0,
+    discoveryFailed: 0,
+    maintenanceSuccess: 0,
+    maintenanceFailed: 0,
+    sourceHealthSuccess: 0,
+    sourceHealthFailed: 0,
+  };
 
-  if (typeof value?.toDate === "function") {
-    try {
-      const d = value.toDate();
-      if (d instanceof Date && !Number.isNaN(d.getTime())) {
-        return d.toISOString();
-      }
-    } catch {}
-  }
+  for (const item of queueRun || []) {
+    if (!item?.processed) continue;
 
-  if (Array.isArray(value)) {
-    return value.map(serializeValue);
-  }
+    summary.processed += 1;
 
-  if (typeof value === "object") {
-    const out: Record<string, any> = {};
-    for (const [key, val] of Object.entries(value)) {
-      out[key] = serializeValue(val);
+    if (item.ok) summary.ok += 1;
+    else summary.failed += 1;
+
+    if (item.taskType === "recovery-chapter") {
+      if (item.ok) summary.recoverySuccess += 1;
+      else summary.recoveryFailed += 1;
     }
-    return out;
+
+    if (
+      item.taskType === "validate-chapter" ||
+      item.taskType === "validate-manga"
+    ) {
+      if (item.ok) summary.validationSuccess += 1;
+      else summary.validationFailed += 1;
+    }
+
+    if (item.taskType === "reimport-chapter") {
+      if (item.ok) summary.reimportSuccess += 1;
+      else summary.reimportFailed += 1;
+    }
+
+    if (item.taskType === "sync-manga") {
+      if (item.ok) summary.syncSuccess += 1;
+      else summary.syncFailed += 1;
+    }
+
+    if (item.taskType === "discover-source") {
+      if (item.ok) summary.discoverySuccess += 1;
+      else summary.discoveryFailed += 1;
+    }
+
+    if (item.taskType === "operator-maintenance") {
+      if (item.ok) summary.maintenanceSuccess += 1;
+      else summary.maintenanceFailed += 1;
+    }
+
+    if (item.taskType === "source-health-check") {
+      if (item.ok) summary.sourceHealthSuccess += 1;
+      else summary.sourceHealthFailed += 1;
+    }
   }
 
-  return value;
+  return summary;
+}
+
+function dynamicQueueBatchSize(metrics: OperatorMetrics, queueStats?: any) {
+  const queued = safeNumber(queueStats?.queued, 0);
+  const broken = safeNumber(metrics.totalBrokenChapters, 0);
+  const criticalSources = safeNumber(metrics.sourcesCritical, 0);
+
+  if (queued >= 25 || broken >= 20 || criticalSources > 0) return 6;
+  if (queued >= 10 || broken >= 5) return 4;
+  return 3;
 }
 
 async function hasRecentOpenIncident(
@@ -165,13 +330,13 @@ async function createIncident(
       title,
       type,
       severity,
-      meta: meta || {},
+      meta: serializeValue(meta || {}),
       resolved: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
 
-  await createOperatorAlert(db, title, severity, meta);
+  await createOperatorAlert(db, title, severity, serializeValue(meta || {}));
 
   return {
     created: true as const,
@@ -231,9 +396,24 @@ async function createAction(
     type,
     status,
     message,
-    meta: meta || {},
+    meta: serializeValue(meta || {}),
     createdAt: new Date(),
   });
+}
+
+async function setOperatorPhase(
+  db: Firestore,
+  phase: string,
+  patch?: Record<string, unknown>
+) {
+  await db.collection("system").doc("operator").set(
+    {
+      currentPhase: phase,
+      updatedAt: new Date(),
+      ...(patch || {}),
+    },
+    { merge: true }
+  );
 }
 
 async function scanBrokenChapters(db: Firestore) {
@@ -429,6 +609,22 @@ async function evaluateAutomationPipelines(
       sourcesWarning: metrics.sourcesWarning,
       autoSyncActive: metrics.autoSyncActive,
       last24hImportedChapters: metrics.last24hImportedChapters,
+    });
+
+    await upsertRecurringProblem(db, {
+      key: "automation::parser-not-100",
+      title: "Parser/identificação ainda não está 100%",
+      type: "parser",
+      severity:
+        metrics.sourcesCritical > 0 || metrics.totalBrokenChapters > 0
+          ? "high"
+          : "warning",
+      meta: {
+        totalBrokenChapters: metrics.totalBrokenChapters,
+        sourcesCritical: metrics.sourcesCritical,
+        sourcesWarning: metrics.sourcesWarning,
+        last24hImportedChapters: metrics.last24hImportedChapters,
+      },
     });
   } else {
     await resolveOpenIncidents(
@@ -741,6 +937,55 @@ async function processMaintenanceTask(db: Firestore, task: any) {
   };
 }
 
+async function registerQueueTaskMemory(
+  db: Firestore,
+  task: {
+    id?: string;
+    type?: string;
+    title?: string;
+    mangaId?: string;
+    chapterId?: string;
+    source?: string;
+    sourceUrl?: string;
+  },
+  result: QueueProcessResult
+) {
+  await storeOperatorMemory(db, {
+    type: result.taskType || task.type || "unknown",
+    success: result.ok,
+    impactScore: result.ok ? 2 : -3,
+    title: normalizeText(task.title) || normalizeText(result.taskType) || "task",
+    summary: normalizeText(result.message),
+    context: {
+      taskId: task.id || result.taskId || "",
+      mangaId: normalizeText(task.mangaId),
+      chapterId: normalizeText(task.chapterId),
+      source: normalizeText(task.source),
+      sourceUrl: normalizeText(task.sourceUrl),
+      result: serializeValue(result.result),
+    },
+  });
+
+  if (!result.ok) {
+    await upsertRecurringProblem(db, {
+      key: `task-failure::${normalizeText(
+        result.taskType || task.type || "unknown"
+      )}`,
+      title: `Falhas recorrentes em ${normalizeText(
+        result.taskType || task.type || "unknown"
+      )}`,
+      type: "queue",
+      severity: "warning",
+      meta: {
+        taskId: task.id || result.taskId || "",
+        mangaId: normalizeText(task.mangaId),
+        chapterId: normalizeText(task.chapterId),
+        message: normalizeText(result.message),
+      },
+    });
+  }
+}
+
 async function processSingleQueueTask(
   db: Firestore
 ): Promise<QueueProcessResult> {
@@ -763,7 +1008,15 @@ async function processSingleQueueTask(
         sourceUrl: task.sourceUrl,
       });
 
-      return {
+      const host = hostFromValue(task.sourceUrl);
+      if (host) {
+        await registerSourceOutcome(db, {
+          host,
+          success: !!result?.ok,
+        });
+      }
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -771,11 +1024,23 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "reimport-chapter") {
       const result = await processReimportChapterTask(db, task);
-      return {
+
+      const host = hostFromValue(task.sourceUrl);
+      if (host) {
+        await registerSourceOutcome(db, {
+          host,
+          success: !!result?.ok,
+        });
+      }
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -783,11 +1048,23 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "sync-manga") {
       const result = await processSyncMangaTask(db, task);
-      return {
+
+      const host = hostFromValue(task.sourceUrl);
+      if (host) {
+        await registerSourceOutcome(db, {
+          host,
+          success: !!result?.ok,
+        });
+      }
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -795,11 +1072,23 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "discover-source") {
       const result = await processDiscoverSourceTask(db, task);
-      return {
+
+      const host = hostFromValue(task.source || task.sourceUrl);
+      if (host) {
+        await registerSourceOutcome(db, {
+          host,
+          success: !!result?.ok,
+        });
+      }
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -807,11 +1096,23 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "validate-manga") {
       const result = await processValidateMangaTask(db, task);
-      return {
+
+      const host = hostFromValue(task.sourceUrl);
+      if (host) {
+        await registerSourceOutcome(db, {
+          host,
+          success: !!result?.ok,
+        });
+      }
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -819,11 +1120,23 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "validate-chapter") {
       const result = await processValidateChapterTask(db, task);
-      return {
+
+      const host = hostFromValue(task.sourceUrl);
+      if (host) {
+        await registerSourceOutcome(db, {
+          host,
+          success: !!result?.ok,
+        });
+      }
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -831,11 +1144,15 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "source-health-check") {
       const result = await processSourceHealthTask(db, task);
-      return {
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -843,11 +1160,15 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     if (task.type === "operator-maintenance") {
       const result = await processMaintenanceTask(db, task);
-      return {
+
+      const payload: QueueProcessResult = {
         ok: !!result?.ok,
         processed: true,
         taskId: task.id,
@@ -855,6 +1176,9 @@ async function processSingleQueueTask(
         message: result?.message || "",
         result,
       };
+
+      await registerQueueTaskMemory(db, task, payload);
+      return payload;
     }
 
     await finishOperatorTask(db, task.id!, {
@@ -862,13 +1186,26 @@ async function processSingleQueueTask(
       resultSummary: "Tipo de task ainda não suportado pelo núcleo atual.",
     });
 
-    return {
+    await upsertRecurringProblem(db, {
+      key: `unsupported-task::${normalizeText(task.type)}`,
+      title: `Task não suportada detectada: ${normalizeText(task.type)}`,
+      type: "queue",
+      severity: "warning",
+      meta: {
+        taskId: task.id || "",
+      },
+    });
+
+    const payload: QueueProcessResult = {
       ok: false,
       processed: true,
       taskId: task.id,
       taskType: task.type,
       message: "Task cancelada: tipo não suportado.",
     };
+
+    await registerQueueTaskMemory(db, task, payload);
+    return payload;
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "Erro ao processar task da fila.";
@@ -887,13 +1224,35 @@ async function processSingleQueueTask(
       });
     }
 
-    return {
+    const host = hostFromValue(task.sourceUrl || task.source);
+    if (host) {
+      await registerSourceOutcome(db, {
+        host,
+        success: false,
+      });
+    }
+
+    await upsertRecurringProblem(db, {
+      key: `task-crash::${normalizeText(task.type)}`,
+      title: `Erro ao processar task ${normalizeText(task.type)}`,
+      type: "queue",
+      severity: "high",
+      meta: {
+        taskId: task.id || "",
+        message,
+      },
+    });
+
+    const payload: QueueProcessResult = {
       ok: false,
       processed: true,
       taskId: task.id,
       taskType: task.type,
       message,
     };
+
+    await registerQueueTaskMemory(db, task, payload);
+    return payload;
   }
 }
 
@@ -915,6 +1274,69 @@ async function processQueueBatch(
   return results;
 }
 
+function buildCoreRecommendations(params: {
+  metrics: OperatorMetrics;
+  queueStats: any;
+  unresolvedIncidents: number;
+  health: OperatorHealth;
+}) {
+  const recs: string[] = [];
+
+  if (params.metrics.totalBrokenChapters > 0) {
+    recs.push(
+      `Executar recovery/validação em ${params.metrics.totalBrokenChapters} capítulo(s) problemático(s).`
+    );
+  }
+
+  if (params.metrics.sourcesCritical > 0) {
+    recs.push(
+      `Priorizar mitigação de ${params.metrics.sourcesCritical} fonte(s) crítica(s).`
+    );
+  }
+
+  if (
+    safeNumber(params.queueStats?.critical, 0) > 0 ||
+    safeNumber(params.queueStats?.error, 0) > 0
+  ) {
+    recs.push(
+      `Reduzir fila crítica/erro (${safeNumber(
+        params.queueStats?.critical,
+        0
+      )} crítica(s), ${safeNumber(
+        params.queueStats?.error,
+        0
+      )} com erro).`
+    );
+  } else if (safeNumber(params.queueStats?.queued, 0) > 0) {
+    recs.push(
+      `A fila tem ${safeNumber(
+        params.queueStats?.queued,
+        0
+      )} task(s) pendente(s) aguardando processamento.`
+    );
+  }
+
+  if (params.unresolvedIncidents > 0) {
+    recs.push(
+      `Resolver ${params.unresolvedIncidents} incidente(s) em aberto para estabilizar o ambiente.`
+    );
+  }
+
+  if (autoImportNotHealthy(params.metrics)) {
+    recs.push(
+      "Discovery/importação ainda não está 100%; manter parser, sources e recovery em observação."
+    );
+  }
+
+  if (params.health === "healthy" && recs.length === 0) {
+    recs.push(
+      "Operação estável. Foco em crescimento, expansão do catálogo e otimização contínua."
+    );
+  }
+
+  return dedupeLines(recs);
+}
+
 export async function buildOperatorStatus(db: Firestore) {
   try {
     const [
@@ -926,6 +1348,7 @@ export async function buildOperatorStatus(db: Firestore) {
       latestReports,
       queueStats,
       queuePreview,
+      memoryInsights,
     ] = await Promise.all([
       collectOperatorMetrics(db).catch(() => emptyMetrics()),
       buildOperatorLearning(db).catch(() => []),
@@ -946,20 +1369,27 @@ export async function buildOperatorStatus(db: Firestore) {
       listOperatorQueueItems(db, { status: "queued", limit: 8 }).catch(
         () => []
       ),
+      buildOperatorMemoryInsights(db).catch(() => null),
     ]);
 
     const metrics = metricsResult || emptyMetrics();
     const learning = safeLearning(learningResult);
-
-    const health = overallHealth(
-      metrics.sourcesWarning,
-      metrics.sourcesCritical,
-      metrics.totalBrokenChapters
-    );
-
     const unresolvedIncidents = latestIncidents.filter(
       (item) => !item.resolved
     ).length;
+
+    const health = computeHealth({
+      metrics,
+      queue: queueStats,
+      unresolvedIncidents,
+    });
+
+    const recommendations = buildCoreRecommendations({
+      metrics,
+      queueStats,
+      unresolvedIncidents,
+      health,
+    });
 
     return {
       ok: true as const,
@@ -974,6 +1404,8 @@ export async function buildOperatorStatus(db: Firestore) {
       latestReports: serializeValue(latestReports),
       queue: queueStats,
       queuePreview: serializeValue(queuePreview),
+      memoryInsights: serializeValue(memoryInsights),
+      recommendations,
       center: {
         summary: {
           totalMangas: metrics.totalMangas,
@@ -1037,6 +1469,10 @@ export async function buildOperatorStatus(db: Firestore) {
         high: 0,
       },
       queuePreview: [],
+      memoryInsights: null,
+      recommendations: [
+        "Falha ao montar status do operador. Revisar métricas, memória e conexão com Firestore.",
+      ],
       center: {
         summary: {
           totalMangas: metrics.totalMangas,
@@ -1072,12 +1508,13 @@ export async function buildOperatorStatus(db: Firestore) {
 }
 
 export async function runOperatorCycle(db: Firestore) {
-  try {
-    const startedAt = new Date();
+  const startedAt = new Date();
 
+  try {
     await db.collection("system").doc("operator").set(
       {
         currentJobStatus: "running",
+        currentPhase: "bootstrap",
         lastRunStartedAt: startedAt,
         lastRunError: "",
         updatedAt: startedAt,
@@ -1085,11 +1522,24 @@ export async function runOperatorCycle(db: Firestore) {
       { merge: true }
     );
 
+    await appendOperatorMemoryEvent(db, {
+      type: "operator-cycle-started",
+      success: true,
+      impactScore: 3,
+      title: "Ciclo do operador iniciado",
+      summary: "O LK AI Operator iniciou um novo ciclo operacional.",
+      context: {
+        startedAt: startedAt.toISOString(),
+      },
+    }).catch(() => null);
+
     const reclaimed = await reclaimStaleOperatorTasks(db).catch(() => ({
       ok: false,
       reclaimed: 0,
       ids: [],
     }));
+
+    await setOperatorPhase(db, "scan-broken-chapters");
 
     const brokenChapters = await scanBrokenChapters(db);
     const createdTasks = await enqueueBrokenChapterTasks(db, brokenChapters);
@@ -1103,8 +1553,20 @@ export async function runOperatorCycle(db: Firestore) {
         {
           count: brokenChapters.length,
           queuedRecoveries: createdTasks,
+          sample: brokenChapters.slice(0, 5),
         }
       );
+
+      await upsertRecurringProblem(db, {
+        key: "chapters::broken-detected",
+        title: "Capítulos quebrados detectados pelo operador",
+        type: "chapter",
+        severity: brokenChapters.length > 20 ? "high" : "warning",
+        incrementBy: brokenChapters.length,
+        meta: {
+          queuedRecoveries: createdTasks,
+        },
+      });
     } else {
       await resolveOpenIncidents(
         db,
@@ -1120,16 +1582,81 @@ export async function runOperatorCycle(db: Firestore) {
       );
     }
 
+    await setOperatorPhase(db, "collect-metrics-before-queue");
+
     const metricsBeforeQueue = await collectOperatorMetrics(db).catch(() =>
       emptyMetrics()
     );
 
+    await setOperatorPhase(db, "evaluate-automation");
     await evaluateAutomationPipelines(db, metricsBeforeQueue);
+
+    await setOperatorPhase(db, "seed-queue");
     await seedOperatorQueueFromMetrics(db, metricsBeforeQueue);
 
-    const queueRun = await processQueueBatch(db, 3);
+    const preQueueStats = await getOperatorQueueStats(db).catch(() => ({
+      total: 0,
+      queued: 0,
+      running: 0,
+      success: 0,
+      warning: 0,
+      error: 0,
+      critical: 0,
+      high: 0,
+    }));
 
+    await setOperatorPhase(db, "process-queue");
+    const queueRun = await processQueueBatch(
+      db,
+      dynamicQueueBatchSize(metricsBeforeQueue, preQueueStats)
+    );
+    const queueSummary = summarizeQueueRun(queueRun);
+
+    await setOperatorPhase(db, "build-status");
     const refreshedStatus = await buildOperatorStatus(db);
+
+    await registerIncidentsSeen(
+      db,
+      refreshedStatus.center?.summary?.unresolvedIncidents || 0
+    );
+
+    await setOperatorPhase(db, "autonomy");
+
+    const autonomousDecision = await buildAutonomousDecision(db, {
+      health: refreshedStatus.health,
+      totalBrokenChapters: refreshedStatus.metrics.totalBrokenChapters,
+      unresolvedIncidents:
+        refreshedStatus.center?.summary?.unresolvedIncidents || 0,
+      queueQueued: refreshedStatus.queue?.queued || 0,
+      queueCritical: refreshedStatus.queue?.critical || 0,
+      automationNot100:
+        refreshedStatus.center?.summary?.automationNot100 || false,
+    });
+
+    const autonomousApplied = await applyAutonomousDecision(
+      db,
+      autonomousDecision,
+      {
+        totalBrokenChapters: refreshedStatus.metrics.totalBrokenChapters,
+        queueCritical: refreshedStatus.queue?.critical || 0,
+        queueQueued: refreshedStatus.queue?.queued || 0,
+        automationNot100:
+          refreshedStatus.center?.summary?.automationNot100 || false,
+      }
+    );
+
+    await createAction(
+      db,
+      "operator-autonomy",
+      autonomousApplied.appliedCount > 0 ? "success" : "warning",
+      "Decisão autônoma processada pelo LK AI Operator.",
+      {
+        decision: serializeValue(autonomousDecision),
+        applied: serializeValue(autonomousApplied),
+      }
+    );
+
+    await setOperatorPhase(db, "reporting");
 
     const report = createOperatorReport(
       refreshedStatus.metrics,
@@ -1137,14 +1664,114 @@ export async function runOperatorCycle(db: Firestore) {
     );
     const persistedReport = await persistOperatorReport(db, report);
 
+    const learningInsights = await buildLearningInsights(db);
+    const memoryInsights = await buildOperatorMemoryInsights(db).catch(
+      () => null
+    );
+
+    await createAction(
+      db,
+      "operator-learning",
+      "success",
+      "IA analisou padrões de aprendizado e desempenho.",
+      {
+        learningInsights,
+        memoryInsights,
+      }
+    );
+
+    try {
+      const ideas = await generateOperatorIdeas(db, {
+        metrics: refreshedStatus.metrics,
+        queue: refreshedStatus.queue,
+        incidents: refreshedStatus.latestIncidents,
+        commentsAi: {
+          total: 0,
+          pending: 0,
+          review: 0,
+          bug: 0,
+          question: 0,
+          request: 0,
+          praise: 0,
+          toxic: 0,
+          spoiler: 0,
+        },
+      });
+
+      await autoCreateIdeas(db, ideas);
+
+      await createAction(
+        db,
+        "operator-ideas",
+        "success",
+        "IA gerou ideias automaticamente com base no estado atual do sistema.",
+        {
+          ideasCount: ideas.length,
+        }
+      );
+    } catch (e) {
+      console.error("Erro ao gerar ideias automáticas:", e);
+
+      await createAction(
+        db,
+        "operator-ideas",
+        "error",
+        "Falha ao gerar ideias automáticas.",
+        {
+          error: String(e),
+        }
+      );
+    }
+
+    await registerExecutionMemory(db, {
+      success: true,
+      durationMs: Date.now() - startedAt.getTime(),
+      recoveredChapters: queueSummary.recoverySuccess,
+      failedRecoveries: queueSummary.recoveryFailed,
+      queueProcessed: countQueueRunProcessed(queueRun),
+      summary: report.summary,
+    });
+
+    await updateBehaviorMemory(db, {
+      preferredFocus: autonomousDecision.mode,
+      lastPrimaryGoal: autonomousDecision.summary,
+      lastGlobalAssessment: report.summary,
+      lastGlobalHealth: refreshedStatus.health,
+      lastGlobalAssessmentAt: new Date().toISOString(),
+    });
+
+    await appendOperatorMemoryEvent(db, {
+      type: "operator-cycle-finished",
+      success: true,
+      impactScore: 10,
+      title: "Ciclo do operador concluído com sucesso",
+      summary: report.summary,
+      context: {
+        durationMs: Date.now() - startedAt.getTime(),
+        health: refreshedStatus.health,
+        reclaimedLocks: reclaimed.reclaimed || 0,
+        queueSummary: serializeValue(queueSummary),
+        autonomyMode: autonomousDecision.mode,
+        autonomyConfidence: autonomousDecision.confidence,
+        autonomyAppliedCount: autonomousApplied.appliedCount,
+        reportId: persistedReport.id,
+      },
+    }).catch(() => null);
+
     await db.collection("system").doc("operator").set(
       {
         currentJobStatus: "success",
+        currentPhase: "idle",
         health: refreshedStatus.health,
         lastRunFinishedAt: new Date(),
         lastRunReportSummary: report.summary,
         lastBrokenChaptersCount: brokenChapters.length,
         lastReportId: persistedReport.id,
+        lastQueueProcessed: queueSummary.processed,
+        lastQueueOk: queueSummary.ok,
+        lastQueueFailed: queueSummary.failed,
+        lastAutonomyMode: autonomousDecision.mode,
+        lastAutonomyConfidence: autonomousDecision.confidence,
         updatedAt: new Date(),
       },
       { merge: true }
@@ -1164,8 +1791,12 @@ export async function runOperatorCycle(db: Firestore) {
         reportId: persistedReport.id,
         automationNot100: autoImportNotHealthy(refreshedStatus.metrics),
         queueRun: serializeValue(queueRun),
+        queueSummary: serializeValue(queueSummary),
         queueStats: serializeValue(refreshedStatus.queue),
         reclaimedLocks: reclaimed.reclaimed || 0,
+        autonomousDecision: serializeValue(autonomousDecision),
+        autonomousApplied: serializeValue(autonomousApplied),
+        memoryInsights: serializeValue(memoryInsights),
       }
     );
 
@@ -1175,7 +1806,11 @@ export async function runOperatorCycle(db: Firestore) {
       report,
       reportId: persistedReport.id,
       queueRun,
+      queueSummary,
       reclaimed,
+      autonomousDecision,
+      autonomousApplied,
+      memoryInsights,
     };
   } catch (error: unknown) {
     const message =
@@ -1184,6 +1819,7 @@ export async function runOperatorCycle(db: Firestore) {
     await db.collection("system").doc("operator").set(
       {
         currentJobStatus: "error",
+        currentPhase: "idle",
         lastRunFinishedAt: new Date(),
         lastRunError: message,
         updatedAt: new Date(),
@@ -1191,8 +1827,38 @@ export async function runOperatorCycle(db: Firestore) {
       { merge: true }
     );
 
+    await upsertRecurringProblem(db, {
+      key: "operator::cycle-error",
+      title: "Falha no ciclo principal do operador",
+      type: "operator",
+      severity: "high",
+      meta: {
+        message,
+      },
+    });
+
+    await appendOperatorMemoryEvent(db, {
+      type: "operator-cycle-failed",
+      success: false,
+      impactScore: -15,
+      title: "Falha no ciclo do operador",
+      summary: message,
+      context: {
+        durationMs: Date.now() - startedAt.getTime(),
+      },
+    }).catch(() => null);
+
     await createIncident(db, message, "operator", "high");
     await createAction(db, "operator-cycle", "error", message);
+
+    await registerExecutionMemory(db, {
+      success: false,
+      durationMs: Date.now() - startedAt.getTime(),
+      recoveredChapters: 0,
+      failedRecoveries: 0,
+      queueProcessed: 0,
+      summary: message,
+    });
 
     return {
       ok: false,

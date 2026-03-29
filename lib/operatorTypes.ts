@@ -51,8 +51,42 @@ export type OperatorLearningScore = {
   health: OperatorHealth;
 };
 
+export type OperatorReportMeta = {
+  health?: OperatorHealth;
+  automationNot100?: boolean;
+  topHosts?: Array<{
+    host: string;
+    score: number;
+    successRate: number;
+    errorRate: number;
+    health: OperatorHealth;
+    recommendedPriority: number;
+  }>;
+  riskyHosts?: Array<{
+    host: string;
+    score: number;
+    successRate: number;
+    errorRate: number;
+    health: OperatorHealth;
+    recommendedPriority: number;
+  }>;
+  executiveSummary?: string;
+  generatedBy?: string;
+  queue?: {
+    total?: number;
+    queued?: number;
+    running?: number;
+    success?: number;
+    warning?: number;
+    error?: number;
+    critical?: number;
+    high?: number;
+  };
+  [key: string]: unknown;
+};
+
 export type OperatorReport = {
-  generatedAt: Date;
+  generatedAt: Date | string;
   summary: string;
   highlights: string[];
   warnings: string[];
@@ -60,6 +94,7 @@ export type OperatorReport = {
   recommendations: string[];
   metrics: OperatorMetrics;
   learning: OperatorLearningScore[];
+  meta?: OperatorReportMeta;
 };
 
 export type CommentClassification =

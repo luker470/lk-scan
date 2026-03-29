@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 
 type IncidentItem = {
@@ -12,7 +12,9 @@ type IncidentItem = {
   createdAt?: any;
   updatedAt?: any;
   resolvedAt?: any;
+  reopenedAt?: any;
   resolutionNote?: string;
+  lastError?: string;
   meta?: Record<string, any>;
 };
 
@@ -35,15 +37,60 @@ type IncidentsResponse = {
     high: number;
     warning: number;
     info: number;
+    byType?: {
+      site?: number;
+      api?: number;
+      source?: number;
+      parser?: number;
+      chapter?: number;
+      sync?: number;
+      queue?: number;
+      backup?: number;
+      comment?: number;
+      operator?: number;
+      unknown?: number;
+    };
+  };
+  executive?: {
+    health?: string;
+    message?: string;
+  };
+  filters?: {
+    q?: string;
+    severity?: string;
+    type?: string;
+    status?: string;
   };
   error?: string;
 };
 
 function severityClass(severity?: string) {
-  if (severity === "critical") return "border-red-700 bg-red-500/10 text-red-300";
-  if (severity === "high") return "border-orange-700 bg-orange-500/10 text-orange-300";
-  if (severity === "warning") return "border-yellow-700 bg-yellow-500/10 text-yellow-300";
+  if (severity === "critical") {
+    return "border-red-700 bg-red-500/10 text-red-300";
+  }
+  if (severity === "high") {
+    return "border-orange-700 bg-orange-500/10 text-orange-300";
+  }
+  if (severity === "warning") {
+    return "border-yellow-700 bg-yellow-500/10 text-yellow-300";
+  }
   return "border-cyan-700 bg-cyan-500/10 text-cyan-300";
+}
+
+function statusClass(resolved?: boolean) {
+  return resolved
+    ? "border-emerald-700 bg-emerald-500/10 text-emerald-300"
+    : "border-yellow-700 bg-yellow-500/10 text-yellow-300";
+}
+
+function executiveClass(health?: string) {
+  if (health === "critical") {
+    return "border-red-800 bg-red-500/10 text-red-300";
+  }
+  if (health === "warning") {
+    return "border-yellow-800 bg-yellow-500/10 text-yellow-300";
+  }
+  return "border-emerald-800 bg-emerald-500/10 text-emerald-300";
 }
 
 function severityWeight(severity?: string) {
@@ -63,12 +110,18 @@ function typeLabel(type?: string) {
   if (type === "comment") return "comentário";
   if (type === "queue") return "fila";
   if (type === "backup") return "backup";
+  if (type === "site") return "site";
+  if (type === "api") return "api";
   return type;
 }
 
 function toDate(v: any) {
   if (!v) return null;
   if (v instanceof Date) return v;
+  if (typeof v === "string") {
+    const parsed = new Date(v);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
   if (v?.seconds) return new Date(v.seconds * 1000);
   if (v?._seconds) return new Date(v._seconds * 1000);
   const parsed = new Date(v);
@@ -109,32 +162,32 @@ function metaPreview(meta?: Record<string, any>) {
   }
   const keys = Object.keys(meta);
   if (keys.length === 0) return "";
-  return keys.slice(0, 3).join(" • ");
+  return keys.slice(0, 4).join(" • ");
 }
 
 function aiHint(item: IncidentItem) {
   if (item.type === "chapter") {
     return item.resolved
-      ? "Capítulo já tratado. O operador pode validar o resultado."
-      : "Prioridade para recovery, reimportação ou fallback de fonte.";
+      ? "Capítulo já tratado. O operador pode validar o resultado final e observar reincidência."
+      : "Prioridade para recovery, validação, reimportação ou fallback de fonte.";
   }
 
   if (item.type === "source") {
     return item.resolved
-      ? "Fonte estabilizada. Monitorar score e reincidência."
-      : "Revalidar host e reduzir dependência se continuar falhando.";
+      ? "Fonte estabilizada. Monitorar score, trust e reincidência."
+      : "Revalidar host, reduzir dependência e revisar resolução/fallback.";
   }
 
   if (item.type === "parser") {
     return item.resolved
       ? "Pipeline estabilizado temporariamente."
-      : "Executar diagnóstico de descoberta/importação e revisar parsing.";
+      : "Executar diagnóstico de discovery/importação e revisar parsing.";
   }
 
   if (item.type === "sync") {
     return item.resolved
       ? "Fluxo de sync voltou ao normal."
-      : "Verificar auto sync, fila e baixa entrada de capítulos.";
+      : "Verificar auto sync, fila, fontes e baixa entrada de capítulos.";
   }
 
   if (item.type === "comment") {
@@ -143,9 +196,38 @@ function aiHint(item: IncidentItem) {
       : "Cruzar com comentários, fila e reader para reduzir reincidência.";
   }
 
+  if (item.type === "queue") {
+    return item.resolved
+      ? "Fila estabilizada."
+      : "O operador deve esvaziar tasks críticas/erro antes de crescer a automação.";
+  }
+
+  if (item.type === "operator") {
+    return item.resolved
+      ? "O núcleo do operador voltou ao normal."
+      : "Verificar cron, cycle, memória, autonomia e integração do core.";
+  }
+
   return item.resolved
     ? "Incidente encerrado, manter monitoramento."
     : "Revisão operacional recomendada.";
+}
+
+function countByType(summary?: IncidentsResponse["summary"]) {
+  const byType = summary?.byType || {};
+  return [
+    { key: "chapter", label: "capítulo", value: byType.chapter || 0 },
+    { key: "source", label: "fonte", value: byType.source || 0 },
+    { key: "parser", label: "parser", value: byType.parser || 0 },
+    { key: "sync", label: "sync", value: byType.sync || 0 },
+    { key: "comment", label: "comentário", value: byType.comment || 0 },
+    { key: "operator", label: "operador", value: byType.operator || 0 },
+    { key: "queue", label: "fila", value: byType.queue || 0 },
+    { key: "backup", label: "backup", value: byType.backup || 0 },
+    { key: "site", label: "site", value: byType.site || 0 },
+    { key: "api", label: "api", value: byType.api || 0 },
+    { key: "unknown", label: "unknown", value: byType.unknown || 0 },
+  ].filter((item) => item.value > 0);
 }
 
 export default function OperatorIncidentsBoard() {
@@ -154,25 +236,63 @@ export default function OperatorIncidentsBoard() {
   const [items, setItems] = useState<IncidentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState<string>("");
+  const [runningOperator, setRunningOperator] = useState(false);
+
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "resolved">("all");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "open" | "resolved">(
+    "all"
+  );
   const [severityFilter, setSeverityFilter] = useState<
     "all" | "critical" | "high" | "warning" | "info"
   >("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
+
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+
   const [summary, setSummary] = useState<IncidentsResponse["summary"]>();
   const [pagination, setPagination] = useState<IncidentsResponse["pagination"]>();
+  const [executive, setExecutive] = useState<{
+    health?: string;
+    message?: string;
+  } | null>(null);
   const [feedback, setFeedback] = useState("");
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setDebouncedQuery(query.trim());
+    }, 250);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query]);
+
   const typeOptions = useMemo(() => {
-    const set = new Set<string>();
+    const known = new Set<string>([
+      "site",
+      "api",
+      "source",
+      "parser",
+      "chapter",
+      "sync",
+      "queue",
+      "backup",
+      "comment",
+      "operator",
+      "unknown",
+    ]);
+
     items.forEach((item) => {
-      if (item.type) set.add(item.type);
+      if (item.type) known.add(item.type);
     });
-    return ["all", ...Array.from(set).sort()];
+
+    return ["all", ...Array.from(known).sort()];
   }, [items]);
 
   async function load(customPage?: number, showLoader = true) {
@@ -187,7 +307,7 @@ export default function OperatorIncidentsBoard() {
       const params = new URLSearchParams();
       params.set("page", String(targetPage));
       params.set("pageSize", String(pageSize));
-      if (query.trim()) params.set("q", query.trim());
+      if (debouncedQuery) params.set("q", debouncedQuery);
       if (statusFilter !== "all") params.set("status", statusFilter);
       if (severityFilter !== "all") params.set("severity", severityFilter);
       if (typeFilter !== "all") params.set("type", typeFilter);
@@ -201,20 +321,15 @@ export default function OperatorIncidentsBoard() {
 
       if (json?.ok) {
         const nextItems = Array.isArray(json.items) ? json.items : [];
-        nextItems.sort((a, b) => {
-          const bySeverity = severityWeight(b.severity) - severityWeight(a.severity);
-          if (bySeverity !== 0) return bySeverity;
-          const ad = toDate(a.createdAt)?.getTime() || 0;
-          const bd = toDate(b.createdAt)?.getTime() || 0;
-          return bd - ad;
-        });
 
         setItems(nextItems);
         setSummary(json.summary);
         setPagination(json.pagination);
+        setExecutive(json.executive || null);
         setPage(json.pagination?.page || targetPage);
       } else {
         setItems([]);
+        setExecutive(null);
         setFeedback(json?.error || "Erro ao carregar incidentes.");
       }
     } catch (e) {
@@ -236,21 +351,28 @@ export default function OperatorIncidentsBoard() {
     setFeedback("");
 
     try {
+      const payload =
+        action === "resolve"
+          ? {
+              action,
+              id: incidentId,
+              resolutionNote:
+                resolutionNote || "Resolvido manualmente no painel.",
+            }
+          : {
+              action,
+              id: incidentId,
+              reopenReason:
+                resolutionNote || "Reaberto manualmente para nova revisão.",
+            };
+
       const res = await fetch("/api/admin/operator/incidents", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           "x-user-id": user.uid,
         },
-        body: JSON.stringify({
-          action,
-          id: incidentId,
-          resolutionNote:
-            resolutionNote ||
-            (action === "resolve"
-              ? "Resolvido manualmente no painel."
-              : "Reaberto manualmente no painel."),
-        }),
+        body: JSON.stringify(payload),
       });
 
       const json = await res.json();
@@ -275,14 +397,47 @@ export default function OperatorIncidentsBoard() {
     }
   }
 
+  async function runOperatorNow() {
+    if (!user?.uid) return;
+
+    setRunningOperator(true);
+    setFeedback("");
+
+    try {
+      const res = await fetch("/api/admin/operator/run", {
+        method: "POST",
+        headers: {
+          "x-user-id": user.uid,
+        },
+      });
+
+      const json = await res.json().catch(() => null);
+
+      if (!json?.ok && !json?.summary) {
+        setFeedback(json?.error || "Falha ao executar operador.");
+      } else {
+        setFeedback(
+          json?.summary?.message || "Operador executado com sucesso."
+        );
+      }
+
+      await load(undefined, false);
+    } catch (e) {
+      console.error(e);
+      setFeedback("Erro ao executar operador.");
+    } finally {
+      setRunningOperator(false);
+    }
+  }
+
   useEffect(() => {
     setPage(1);
-  }, [query, statusFilter, severityFilter, typeFilter, pageSize]);
+  }, [debouncedQuery, statusFilter, severityFilter, typeFilter, pageSize]);
 
   useEffect(() => {
     load(1, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user?.uid, query, statusFilter, severityFilter, typeFilter, pageSize]);
+  }, [user?.uid, debouncedQuery, statusFilter, severityFilter, typeFilter, pageSize]);
 
   useEffect(() => {
     if (!autoRefresh || !user?.uid) return;
@@ -291,7 +446,7 @@ export default function OperatorIncidentsBoard() {
     }, 30000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoRefresh, user?.uid, page, pageSize, query, statusFilter, severityFilter, typeFilter]);
+  }, [autoRefresh, user?.uid, page, pageSize, debouncedQuery, statusFilter, severityFilter, typeFilter]);
 
   const stats = useMemo(() => {
     return {
@@ -299,12 +454,27 @@ export default function OperatorIncidentsBoard() {
       open: summary?.open ?? 0,
       resolved: summary?.resolved ?? 0,
       critical: summary?.critical ?? 0,
+      high: summary?.high ?? 0,
+      warning: summary?.warning ?? 0,
+      info: summary?.info ?? 0,
     };
   }, [summary]);
 
   const openCritical = useMemo(() => {
-    return items.filter((item) => !item.resolved && item.severity === "critical").length;
+    return items.filter(
+      (item) => !item.resolved && item.severity === "critical"
+    ).length;
   }, [items]);
+
+  const riskLabel = useMemo(() => {
+    if (stats.critical > 0) return { text: "ALTO", cls: "text-red-400" };
+    if (stats.open > 5 || stats.high > 0) {
+      return { text: "MÉDIO", cls: "text-yellow-400" };
+    }
+    return { text: "BAIXO", cls: "text-emerald-400" };
+  }, [stats]);
+
+  const typeStats = useMemo(() => countByType(summary), [summary]);
 
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
@@ -333,12 +503,26 @@ export default function OperatorIncidentsBoard() {
             >
               Atualizar
             </button>
+
+            <button
+              onClick={runOperatorNow}
+              disabled={runningOperator}
+              className="rounded-xl border border-red-700 px-3 py-2 text-sm text-red-300 transition hover:bg-red-500/10 disabled:opacity-50"
+            >
+              {runningOperator ? "Executando..." : "Executar operador"}
+            </button>
           </div>
         </div>
 
         {feedback ? (
           <div className="rounded-xl border border-cyan-700 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-300">
             {feedback}
+          </div>
+        ) : null}
+
+        {executive ? (
+          <div className={`rounded-xl border px-3 py-3 text-sm ${executiveClass(executive.health)}`}>
+            <b>Visão do operador:</b> {executive.message}
           </div>
         ) : null}
 
@@ -349,7 +533,7 @@ export default function OperatorIncidentsBoard() {
           </div>
         ) : null}
 
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-4 xl:grid-cols-8">
           <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
             <div className="text-xs text-zinc-500">Total</div>
             <div className="text-xl font-bold text-zinc-100">{stats.total}</div>
@@ -366,13 +550,45 @@ export default function OperatorIncidentsBoard() {
             <div className="text-xs text-zinc-500">Críticos</div>
             <div className="text-xl font-bold text-red-300">{stats.critical}</div>
           </div>
+          <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+            <div className="text-xs text-zinc-500">High</div>
+            <div className="text-xl font-bold text-orange-300">{stats.high}</div>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+            <div className="text-xs text-zinc-500">Warning</div>
+            <div className="text-xl font-bold text-yellow-200">{stats.warning}</div>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+            <div className="text-xs text-zinc-500">Info</div>
+            <div className="text-xl font-bold text-cyan-300">{stats.info}</div>
+          </div>
+          <div className="rounded-xl border border-zinc-800 bg-black/20 p-3 text-sm">
+            <div className="text-xs text-zinc-500">Risco operacional</div>
+            <div className={`text-xl font-bold ${riskLabel.cls}`}>{riskLabel.text}</div>
+          </div>
         </div>
+
+        {typeStats.length > 0 ? (
+          <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+            <div className="mb-2 text-xs text-zinc-500">Distribuição por tipo</div>
+            <div className="flex flex-wrap gap-2">
+              {typeStats.map((item) => (
+                <span
+                  key={item.key}
+                  className="rounded-lg border border-zinc-800 bg-zinc-950/80 px-2 py-1 text-xs text-zinc-300"
+                >
+                  {item.label}: <b>{item.value}</b>
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-3 xl:grid-cols-[1fr_auto_auto_auto_auto]">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar por título, tipo ou meta..."
+            placeholder="Buscar por título, tipo, resolução, erro ou meta..."
             className="w-full rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-3 text-sm outline-none focus:border-cyan-400"
           />
 
@@ -423,9 +639,13 @@ export default function OperatorIncidentsBoard() {
       </div>
 
       {loading ? (
-        <div className="text-zinc-400">Carregando incidentes...</div>
+        <div className="rounded-xl border border-zinc-800 bg-black/20 p-4 text-zinc-400">
+          Carregando incidentes...
+        </div>
       ) : items.length === 0 ? (
-        <div className="text-zinc-500">Nenhum incidente encontrado.</div>
+        <div className="rounded-xl border border-zinc-800 bg-black/20 p-4 text-zinc-500">
+          Nenhum incidente encontrado.
+        </div>
       ) : (
         <>
           <div className="space-y-3">
@@ -437,14 +657,28 @@ export default function OperatorIncidentsBoard() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-1">
                     <div className="font-semibold text-zinc-200">
-                      {compactText(item.title, 220)}
+                      {compactText(item.title, 240)}
                     </div>
+
                     <div className="text-xs text-zinc-500">
                       Criado em: {formatDate(item.createdAt)} • {relativeTime(item.createdAt)}
                     </div>
+
+                    {item.updatedAt ? (
+                      <div className="text-xs text-zinc-600">
+                        Atualizado em: {formatDate(item.updatedAt)}
+                      </div>
+                    ) : null}
+
                     {item.resolvedAt ? (
                       <div className="text-xs text-zinc-500">
                         Resolvido em: {formatDate(item.resolvedAt)}
+                      </div>
+                    ) : null}
+
+                    {item.reopenedAt ? (
+                      <div className="text-xs text-zinc-500">
+                        Reaberto em: {formatDate(item.reopenedAt)}
                       </div>
                     ) : null}
                   </div>
@@ -459,11 +693,9 @@ export default function OperatorIncidentsBoard() {
                     </span>
 
                     <span
-                      className={`rounded-full border px-2 py-1 text-xs font-semibold ${
+                      className={`rounded-full border px-2 py-1 text-xs font-semibold ${statusClass(
                         item.resolved
-                          ? "border-emerald-700 bg-emerald-500/10 text-emerald-300"
-                          : "border-yellow-700 bg-yellow-500/10 text-yellow-300"
-                      }`}
+                      )}`}
                     >
                       {item.resolved ? "resolvido" : "aberto"}
                     </span>
@@ -478,6 +710,12 @@ export default function OperatorIncidentsBoard() {
                   {metaPreview(item.meta) ? (
                     <span className="rounded-lg border border-zinc-800 bg-zinc-900/80 px-2 py-1">
                       {metaPreview(item.meta)}
+                    </span>
+                  ) : null}
+
+                  {item.lastError ? (
+                    <span className="rounded-lg border border-red-900 bg-red-500/5 px-2 py-1 text-red-300">
+                      erro: {compactText(item.lastError, 80)}
                     </span>
                   ) : null}
                 </div>
@@ -502,7 +740,11 @@ export default function OperatorIncidentsBoard() {
                   {!item.resolved ? (
                     <button
                       onClick={() =>
-                        updateIncident("resolve", item.id, "Resolvido manualmente no painel.")
+                        updateIncident(
+                          "resolve",
+                          item.id,
+                          "Resolvido manualmente no painel."
+                        )
                       }
                       disabled={mutating === item.id}
                       className="rounded-xl border border-emerald-700 px-3 py-2 text-sm text-emerald-300 transition hover:bg-emerald-500/10 disabled:opacity-50"
@@ -512,7 +754,11 @@ export default function OperatorIncidentsBoard() {
                   ) : (
                     <button
                       onClick={() =>
-                        updateIncident("reopen", item.id, "Reaberto para nova revisão.")
+                        updateIncident(
+                          "reopen",
+                          item.id,
+                          "Reaberto para nova revisão."
+                        )
                       }
                       disabled={mutating === item.id}
                       className="rounded-xl border border-yellow-700 px-3 py-2 text-sm text-yellow-300 transition hover:bg-yellow-500/10 disabled:opacity-50"

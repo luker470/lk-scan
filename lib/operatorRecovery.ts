@@ -9,6 +9,11 @@ import {
   markSourceFailure,
   markSourceSuccess,
 } from "@/lib/operatorLearning";
+import {
+  storeOperatorMemory,
+  upsertRecurringProblem,
+  registerKnowledgeLearned,
+} from "@/lib/operatorMemory";
 
 type RecoveryCandidate = {
   mangaId: string;
@@ -24,8 +29,15 @@ type RecoveryResultItem = {
   chapterId: string;
   title: string;
   ok: boolean;
-  action: string;
+  action:
+    | "recovered-local"
+    | "pending-reimport"
+    | "failed"
+    | "skipped"
+    | "already-healthy";
   reason?: string;
+  pagesCount?: number;
+  sourceUrl?: string;
 };
 
 type RecoverySummary = {
@@ -57,6 +69,12 @@ function normalizeText(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function compactText(value: unknown, max = 240) {
+  const text = normalizeText(value).replace(/\s+/g, " ");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
+}
+
 function hostFromUrl(url?: string | null) {
   try {
     return new URL(String(url || "").trim()).hostname.toLowerCase();
@@ -65,11 +83,43 @@ function hostFromUrl(url?: string | null) {
   }
 }
 
+function normalizeImageUrl(url: string) {
+  const value = normalizeText(url);
+  if (!isHttpUrl(value)) return null;
+
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
+function pageLooksBroken(url: string) {
+  const value = normalizeText(url).toLowerCase();
+  if (!value) return true;
+
+  const suspiciousParts = [
+    "undefined",
+    "null",
+    "placeholder",
+    "not-found",
+    "404",
+    "data:image",
+    "base64,",
+    "javascript:",
+  ];
+
+  return suspiciousParts.some((part) => value.includes(part));
+}
+
 function normalizePageValue(page: any): string | null {
   if (!page) return null;
 
   if (typeof page === "string" && page.trim()) {
-    return page.trim();
+    const normalized = normalizeImageUrl(page.trim());
+    return normalized && !pageLooksBroken(normalized) ? normalized : null;
   }
 
   if (typeof page === "object") {
@@ -84,11 +134,26 @@ function normalizePageValue(page: any): string | null {
       page.originalUrl;
 
     if (typeof possible === "string" && possible.trim()) {
-      return possible.trim();
+      const normalized = normalizeImageUrl(possible.trim());
+      return normalized && !pageLooksBroken(normalized) ? normalized : null;
     }
   }
 
   return null;
+}
+
+function dedupePreserveOrder(items: string[]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const item of items) {
+    const key = normalizeText(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+
+  return out;
 }
 
 function extractPagesFromChapter(chapter: Record<string, any>): string[] {
@@ -98,6 +163,8 @@ function extractPagesFromChapter(chapter: Record<string, any>): string[] {
     chapter.pageLinks,
     chapter.imageLinks,
     chapter.pageUrls,
+    chapter.assets,
+    chapter.files,
   ];
 
   const pages = rawCandidates
@@ -105,7 +172,7 @@ function extractPagesFromChapter(chapter: Record<string, any>): string[] {
     .map(normalizePageValue)
     .filter((value): value is string => !!value && isHttpUrl(value));
 
-  return Array.from(new Set(pages.map((item) => item.trim())));
+  return dedupePreserveOrder(pages);
 }
 
 function chapterLooksBroken(chapter: Record<string, any>) {
@@ -115,9 +182,14 @@ function chapterLooksBroken(chapter: Record<string, any>) {
   );
 
   const extractedPages = extractPagesFromChapter(chapter);
+  const recoveryStatus = normalizeText(chapter.recoveryStatus).toLowerCase();
+  const validationStatus = normalizeText(chapter.validationStatus).toLowerCase();
 
+  if (recoveryStatus === "failed") return true;
+  if (validationStatus === "invalid") return true;
   if (storedCount <= 0) return true;
   if (extractedPages.length <= 0) return true;
+  if (storedCount > 0 && extractedPages.length === 0) return true;
 
   return false;
 }
@@ -367,6 +439,25 @@ async function markChapterRecovered(
     }
   );
 
+  await storeOperatorMemory(db, {
+    type: "recovery-chapter",
+    success: true,
+    impactScore: 8,
+    title: `Recovery bem-sucedido: ${params.title}`,
+    summary: `Capítulo recuperado localmente com ${params.pages.length} página(s).`,
+    context: {
+      mangaId: params.mangaId,
+      chapterId: params.chapterId,
+      pagesCount: params.pages.length,
+      sourceHost: hostFromUrl(params.sourceUrl),
+    },
+  });
+
+  await registerKnowledgeLearned(db, {
+    title: `Recovery local funcionou para ${params.title}`,
+    success: true,
+  });
+
   await markRecoverySuccess(db, {
     sourceUrl: params.sourceUrl || "",
     mangaId: params.mangaId,
@@ -393,6 +484,50 @@ async function markChapterRecovered(
   });
 }
 
+async function markChapterHealthy(
+  db: Firestore,
+  params: {
+    mangaId: string;
+    chapterId: string;
+    title: string;
+    pages: string[];
+    sourceUrl?: string;
+  }
+) {
+  const ref = db
+    .collection("mangas")
+    .doc(params.mangaId)
+    .collection("chapters")
+    .doc(params.chapterId);
+
+  await ref.set(
+    {
+      pages: params.pages,
+      pagesCount: params.pages.length,
+      pageCount: params.pages.length,
+      validationStatus: "valid",
+      recoveredAt: new Date(),
+      updatedAt: new Date(),
+      lastError: "",
+    },
+    { merge: true }
+  );
+
+  await resolveChapterIncidentsForChapter(db, params.mangaId, params.chapterId);
+
+  await registerAction(
+    db,
+    "chapter-health-check",
+    "success",
+    `Capítulo já estava saudável e foi normalizado: ${params.title}.`,
+    {
+      mangaId: params.mangaId,
+      chapterId: params.chapterId,
+      pagesCount: params.pages.length,
+    }
+  );
+}
+
 async function recoverSingleChapter(
   db: Firestore,
   mangaId: string,
@@ -414,6 +549,31 @@ async function recoverSingleChapter(
     "";
 
   const extractedPages = extractPagesFromChapter(chapter);
+  const currentStoredCount = safeNumber(
+    chapter.pagesCount ?? chapter.pageCount ?? 0,
+    0
+  );
+
+  if (!chapterLooksBroken(chapter) && pagesLookHealthy(extractedPages)) {
+    await markChapterHealthy(db, {
+      mangaId,
+      chapterId,
+      title,
+      pages: extractedPages,
+      sourceUrl,
+    });
+
+    return {
+      mangaId,
+      chapterId,
+      title,
+      ok: true,
+      action: "already-healthy",
+      pagesCount: extractedPages.length,
+      sourceUrl,
+      reason: "Capítulo já estava saudável; apenas normalizado.",
+    };
+  }
 
   if (pagesLookHealthy(extractedPages)) {
     await markChapterRecovered(db, {
@@ -430,6 +590,8 @@ async function recoverSingleChapter(
       title,
       ok: true,
       action: "recovered-local",
+      pagesCount: extractedPages.length,
+      sourceUrl,
     };
   }
 
@@ -462,8 +624,35 @@ async function recoverSingleChapter(
         chapterId,
         sourceUrl,
         queuedTask: queued.id || "",
+        previousStoredCount: currentStoredCount,
       }
     );
+
+    await upsertRecurringProblem(db, {
+      key: `chapter::pending-reimport::${mangaId}::${chapterId}`,
+      title: `Capítulo aguardando reimportação automática: ${title}`,
+      type: "chapter",
+      severity: "warning",
+      meta: {
+        mangaId,
+        chapterId,
+        sourceHost: hostFromUrl(sourceUrl),
+      },
+    });
+
+    await storeOperatorMemory(db, {
+      type: "recovery-chapter",
+      success: false,
+      impactScore: -4,
+      title: `Recovery local insuficiente: ${title}`,
+      summary:
+        "Sem páginas locais válidas; capítulo enviado para reimportação automática.",
+      context: {
+        mangaId,
+        chapterId,
+        sourceHost: hostFromUrl(sourceUrl),
+      },
+    });
 
     await markRecoveryFailure(db, {
       sourceUrl,
@@ -486,6 +675,7 @@ async function recoverSingleChapter(
       ok: false,
       action: "pending-reimport",
       reason: "Sem páginas locais válidas, mas com sourceUrl disponível.",
+      sourceUrl,
     };
   }
 
@@ -511,6 +701,18 @@ async function recoverSingleChapter(
     }
   );
 
+  await upsertRecurringProblem(db, {
+    key: `chapter::recovery-failed::${mangaId}::${chapterId}`,
+    title: `Recovery falhou sem reimport possível: ${title}`,
+    type: "chapter",
+    severity: "high",
+    meta: {
+      mangaId,
+      chapterId,
+      sourceHost: hostFromUrl(sourceUrl),
+    },
+  });
+
   await registerAction(
     db,
     "chapter-recovery",
@@ -521,6 +723,20 @@ async function recoverSingleChapter(
       chapterId,
     }
   );
+
+  await storeOperatorMemory(db, {
+    type: "recovery-chapter",
+    success: false,
+    impactScore: -8,
+    title: `Recovery falhou: ${title}`,
+    summary:
+      "Capítulo sem páginas válidas e sem sourceUrl utilizável para reimportação.",
+    context: {
+      mangaId,
+      chapterId,
+      sourceHost: hostFromUrl(sourceUrl),
+    },
+  });
 
   await markRecoveryFailure(db, {
     sourceUrl,
@@ -536,6 +752,7 @@ async function recoverSingleChapter(
     ok: false,
     action: "failed",
     reason: "Sem páginas válidas e sem sourceUrl.",
+    sourceUrl,
   };
 }
 
@@ -561,6 +778,11 @@ export async function validateSingleChapter(
   }
 
   const chapter = snap.data() || {};
+  const title = String(chapter.title || `Capítulo ${chapter.number || chapterId}`);
+  const sourceUrl = normalizeText(
+    chapter.sourceUrl || chapter.chapterUrl || chapter.url || ""
+  );
+
   const pages = extractPagesFromChapter(chapter);
 
   if (pagesLookHealthy(pages)) {
@@ -579,10 +801,18 @@ export async function validateSingleChapter(
 
     await resolveChapterIncidentsForChapter(db, mangaId, chapterId);
 
+    await markSourceSuccess(db, {
+      sourceUrl,
+      mangaId,
+      chapterId,
+      message: `Validação confirmou capítulo saudável: ${title}`,
+    });
+
     return {
       ok: true,
       valid: true,
       pagesCount: pages.length,
+      reason: "Capítulo validado com sucesso.",
     };
   }
 
@@ -596,18 +826,35 @@ export async function validateSingleChapter(
     { merge: true }
   );
 
+  await upsertRecurringProblem(db, {
+    key: `chapter::validation-invalid::${mangaId}::${chapterId}`,
+    title: `Validação detectou capítulo inválido: ${title}`,
+    type: "chapter",
+    severity: "warning",
+    meta: {
+      mangaId,
+      chapterId,
+      sourceHost: hostFromUrl(sourceUrl),
+    },
+  });
+
   await enqueueOperatorTask(db, {
     type: "recovery-chapter",
     priority: "high",
     mangaId,
     chapterId,
-    sourceUrl: normalizeText(
-      chapter.sourceUrl || chapter.chapterUrl || chapter.url || ""
-    ),
+    sourceUrl,
     title: `Recovery do capítulo ${chapterId}`,
     description: "Validação detectou capítulo quebrado após importação/recovery.",
     dedupeKey: `validate-recovery::${mangaId}::${chapterId}`,
     maxAttempts: 5,
+  });
+
+  await markSourceFailure(db, {
+    sourceUrl,
+    mangaId,
+    chapterId,
+    message: `Validação detectou capítulo inválido: ${title}`,
   });
 
   return {
@@ -627,7 +874,11 @@ async function findBrokenChapters(
   const results: RecoveryCandidate[] = [];
 
   for (const mangaDoc of mangasSnap.docs) {
-    const chaptersSnap = await mangaDoc.ref.collection("chapters").get().catch(() => null);
+    const chaptersSnap = await mangaDoc.ref
+      .collection("chapters")
+      .get()
+      .catch(() => null);
+
     if (!chaptersSnap) continue;
 
     for (const chapterDoc of chaptersSnap.docs) {
@@ -702,6 +953,7 @@ export async function runBasicRecovery(db: Firestore): Promise<RecoverySummary> 
         ok: false,
         action: "skipped",
         reason: "Capítulo não encontrado no momento do recovery.",
+        sourceUrl: candidate.sourceUrl,
       });
       continue;
     }
@@ -735,6 +987,20 @@ export async function runBasicRecovery(db: Firestore): Promise<RecoverySummary> 
     }
   );
 
+  await storeOperatorMemory(db, {
+    type: "recovery-cycle",
+    success: failed === 0,
+    impactScore: failed === 0 ? 10 : recovered > 0 ? 4 : -6,
+    title: "Ciclo de recovery automático",
+    summary: `Recovery executado em ${candidates.length} capítulo(s). Recuperados: ${recovered}, falhas: ${failed}, ignorados: ${skipped}.`,
+    context: {
+      scanned: candidates.length,
+      recovered,
+      failed,
+      skipped,
+    },
+  });
+
   return {
     ok: failed === 0,
     scanned: candidates.length,
@@ -754,19 +1020,19 @@ export async function processRecoveryQueueTask(
     sourceUrl?: string;
   }
 ) {
-  const mangaId = String(task.mangaId || "").trim();
-  const chapterId = String(task.chapterId || "").trim();
+  const mangaId = normalizeText(task.mangaId);
+  const chapterId = normalizeText(task.chapterId);
 
   if (!mangaId || !chapterId) {
     await finishOperatorTask(db, task.id, {
       status: "error",
-      lastError: "Task de recovery sem mangaId/chapterId válidos.",
-      resultSummary: "Task inválida.",
+      lastError: "Task recovery-chapter sem mangaId/chapterId válido.",
+      resultSummary: "Task inválida para recovery.",
     });
 
     return {
       ok: false,
-      message: "Task inválida.",
+      message: "Task recovery-chapter inválida.",
     };
   }
 
@@ -780,13 +1046,14 @@ export async function processRecoveryQueueTask(
 
   if (!snap?.exists) {
     await finishOperatorTask(db, task.id, {
-      status: "warning",
-      resultSummary: "Capítulo não encontrado no momento do processamento.",
+      status: "error",
+      lastError: "Capítulo não encontrado para recovery.",
+      resultSummary: "Recovery falhou: capítulo não encontrado.",
     });
 
     return {
       ok: false,
-      message: "Capítulo não encontrado.",
+      message: "Capítulo não encontrado para recovery.",
     };
   }
 
@@ -794,18 +1061,34 @@ export async function processRecoveryQueueTask(
   const result = await recoverSingleChapter(db, mangaId, chapterId, chapter);
 
   await finishOperatorTask(db, task.id, {
-    status: result.ok ? "success" : "warning",
-    resultSummary: result.action,
-    lastError: result.reason || "",
+    status: result.ok
+      ? "success"
+      : result.action === "pending-reimport"
+      ? "warning"
+      : "error",
+    resultSummary: result.ok
+      ? "Recovery do capítulo concluído."
+      : result.action === "pending-reimport"
+      ? "Recovery local falhou; capítulo enviado para reimportação."
+      : "Recovery do capítulo falhou.",
+    lastError: result.ok ? "" : normalizeText(result.reason),
     metaPatch: {
-      mangaId,
-      chapterId,
-      sourceUrl: task.sourceUrl || "",
+      recoveryResult: {
+        mangaId: result.mangaId,
+        chapterId: result.chapterId,
+        title: result.title,
+        action: result.action,
+        pagesCount: result.pagesCount || 0,
+        sourceUrl: result.sourceUrl || task.sourceUrl || "",
+      },
     },
   });
 
   return {
     ok: result.ok,
+    message: result.ok
+      ? `Recovery concluído: ${compactText(result.title, 120)}`
+      : result.reason || "Recovery com falha.",
     result,
   };
 }

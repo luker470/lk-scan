@@ -73,6 +73,19 @@ function sentimentClass(type?: string) {
   }
 }
 
+function moderationClass(status?: string) {
+  if (status === "pending-review") {
+    return "border-yellow-500/20 bg-yellow-500/10 text-yellow-300";
+  }
+  if (status === "approved") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-300";
+  }
+  if (status === "hidden") {
+    return "border-red-500/20 bg-red-500/10 text-red-300";
+  }
+  return "border-zinc-700 bg-zinc-800/60 text-zinc-300";
+}
+
 function toDate(v: any) {
   if (!v) return null;
   if (v instanceof Date) return v;
@@ -86,6 +99,12 @@ function formatDate(v: any) {
   const d = toDate(v);
   if (!d) return "Sem data";
   return d.toLocaleString("pt-BR");
+}
+
+function compactText(value: unknown, max = 220) {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
 }
 
 function aiReading(item: CommentItem) {
@@ -319,6 +338,12 @@ export default function AICommentCenter() {
     };
   }, [filteredItems, page, pageSize]);
 
+  const reviewPressure = useMemo(() => {
+    if (stats.review >= 10) return "alta";
+    if (stats.review >= 4) return "média";
+    return "baixa";
+  }, [stats.review]);
+
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 space-y-5">
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -370,7 +395,7 @@ export default function AICommentCenter() {
         </div>
       ) : null}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-9">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-11">
         <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
           <div className="text-xs text-zinc-500">Total</div>
           <div className="text-xl font-bold text-zinc-100">{stats.total}</div>
@@ -406,6 +431,10 @@ export default function AICommentCenter() {
         <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
           <div className="text-xs text-zinc-500">Spoiler</div>
           <div className="text-xl font-bold text-yellow-200">{stats.spoiler}</div>
+        </div>
+        <div className="rounded-xl border border-zinc-800 bg-black/20 p-3 xl:col-span-2">
+          <div className="text-xs text-zinc-500">Pressão de revisão</div>
+          <div className="text-xl font-bold text-zinc-100">{reviewPressure}</div>
         </div>
       </div>
 
@@ -513,6 +542,16 @@ export default function AICommentCenter() {
                       </span>
                     ) : null}
 
+                    {item.moderationStatus ? (
+                      <span
+                        className={`px-2 py-1 rounded-full border text-xs font-semibold ${moderationClass(
+                          item.moderationStatus
+                        )}`}
+                      >
+                        {item.moderationStatus}
+                      </span>
+                    ) : null}
+
                     {item.needsReview ? (
                       <span className="px-2 py-1 rounded-full border border-yellow-500/20 bg-yellow-500/10 text-yellow-300 text-xs font-semibold">
                         revisão necessária
@@ -557,51 +596,48 @@ export default function AICommentCenter() {
                   </div>
                 ) : null}
 
-                {item.moderationStatus ? (
-                  <div className="text-xs text-zinc-500">
-                    moderação:{" "}
-                    <span className="text-zinc-300">{item.moderationStatus}</span>
-                  </div>
-                ) : null}
-
-                <div className="flex justify-end gap-2 flex-wrap">
+                <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => analyzeSingle(item.path, false)}
-                    disabled={processingPath === item.path || processingAll}
-                    className="px-4 py-2 rounded-xl border border-zinc-700 text-zinc-200 hover:border-cyan-400 hover:text-cyan-300 transition disabled:opacity-50"
+                    disabled={processingPath === item.path}
+                    className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 transition hover:border-cyan-400 hover:text-cyan-300 disabled:opacity-50"
                   >
                     {processingPath === item.path ? "Analisando..." : "Analisar"}
                   </button>
 
                   <button
                     onClick={() => analyzeSingle(item.path, true)}
-                    disabled={processingPath === item.path || processingAll}
-                    className="px-4 py-2 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 disabled:opacity-50"
+                    disabled={processingPath === item.path}
+                    className="rounded-xl bg-cyan-500 px-3 py-2 text-sm font-bold text-black transition hover:bg-cyan-400 disabled:opacity-50"
                   >
-                    {processingPath === item.path ? "Reprocessando..." : "Reprocessar IA"}
+                    {processingPath === item.path ? "Reprocessando..." : "Reprocessar"}
                   </button>
                 </div>
               </div>
             ))}
           </div>
 
-          <div className="flex items-center justify-between gap-3 pt-2">
-            <div className="text-sm text-zinc-500">
-              Página {pagination.page} de {pagination.totalPages} • {pagination.total} item(ns)
+          <div className="flex flex-col gap-3 rounded-xl border border-zinc-800 bg-black/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-zinc-400">
+              Página <b className="text-zinc-200">{pagination.page}</b> de{" "}
+              <b className="text-zinc-200">{pagination.totalPages}</b> •{" "}
+              {pagination.total} item(ns)
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex gap-2">
               <button
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={!pagination.hasPrev}
-                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 disabled:opacity-40"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition hover:border-cyan-400 hover:text-cyan-300 disabled:opacity-40"
               >
                 Anterior
               </button>
               <button
-                onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
+                onClick={() =>
+                  setPage((p) => Math.min(pagination.totalPages, p + 1))
+                }
                 disabled={!pagination.hasNext}
-                className="rounded-xl border border-zinc-700 px-3 py-2 text-sm text-zinc-200 disabled:opacity-40"
+                className="rounded-xl border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition hover:border-cyan-400 hover:text-cyan-300 disabled:opacity-40"
               >
                 Próxima
               </button>

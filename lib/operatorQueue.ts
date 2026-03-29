@@ -8,7 +8,10 @@ export type OperatorQueueTaskType =
   | "source-health-check"
   | "validate-manga"
   | "validate-chapter"
-  | "operator-maintenance";
+  | "operator-maintenance"
+  | "comment-analysis"
+  | "report-generation"
+  | "idea-generation";
 
 export type OperatorQueueTaskStatus =
   | "queued"
@@ -54,6 +57,8 @@ export type OperatorQueueItem = {
   meta?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
+
+  sortScore?: number;
 };
 
 type QueueListFilters = {
@@ -82,8 +87,92 @@ function normalizeString(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function normalizeTaskType(value: unknown): OperatorQueueTaskType {
+  const v = normalizeString(value) as OperatorQueueTaskType;
+
+  if (
+    v === "recovery-chapter" ||
+    v === "reimport-chapter" ||
+    v === "sync-manga" ||
+    v === "discover-source" ||
+    v === "source-health-check" ||
+    v === "validate-manga" ||
+    v === "validate-chapter" ||
+    v === "operator-maintenance" ||
+    v === "comment-analysis" ||
+    v === "report-generation" ||
+    v === "idea-generation"
+  ) {
+    return v;
+  }
+
+  return "operator-maintenance";
+}
+
+function normalizePriority(value: unknown): OperatorQueuePriority {
+  const v = normalizeString(value).toLowerCase();
+  if (v === "critical") return "critical";
+  if (v === "high") return "high";
+  if (v === "low") return "low";
+  return "normal";
+}
+
+function normalizeStatus(value: unknown): OperatorQueueTaskStatus {
+  const v = normalizeString(value).toLowerCase();
+  if (v === "running") return "running";
+  if (v === "success") return "success";
+  if (v === "warning") return "warning";
+  if (v === "error") return "error";
+  if (v === "canceled") return "canceled";
+  return "queued";
+}
+
 function cleanMeta(meta?: Record<string, unknown>) {
   return meta && typeof meta === "object" ? meta : {};
+}
+
+function sanitizeMetaValue(value: any): any {
+  if (value == null) return value;
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (typeof value?.toDate === "function") {
+    try {
+      const d = value.toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) {
+        return d.toISOString();
+      }
+    } catch {}
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(sanitizeMetaValue);
+  }
+
+  if (typeof value === "object") {
+    const out: Record<string, any> = {};
+    for (const [key, val] of Object.entries(value)) {
+      if (typeof val === "function") continue;
+      out[key] = sanitizeMetaValue(val);
+    }
+    return out;
+  }
+
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  return String(value);
+}
+
+function sanitizeMeta(meta?: Record<string, unknown>) {
+  return sanitizeMetaValue(cleanMeta(meta));
 }
 
 function toDate(value: any, fallback?: Date | null) {
@@ -146,7 +235,7 @@ async function registerQueueAction(
     type: "operator-queue",
     status,
     message,
-    meta: meta || {},
+    meta: sanitizeMeta(meta),
     createdAt: nowDate(),
   });
 }
@@ -183,6 +272,18 @@ function buildDefaultTitle(
     return `Validação do capítulo ${payload.chapterId || ""}`.trim();
   }
 
+  if (type === "comment-analysis") {
+    return "Análise automática de comentários";
+  }
+
+  if (type === "report-generation") {
+    return "Geração automática de relatório";
+  }
+
+  if (type === "idea-generation") {
+    return "Geração automática de ideias";
+  }
+
   return "Manutenção automática do operador";
 }
 
@@ -206,6 +307,55 @@ export function buildOperatorQueueDedupeKey(params: {
     .join("::");
 }
 
+function buildTaskSummaryKey(item: Partial<OperatorQueueItem>) {
+  return [
+    normalizeString(item.type),
+    normalizeString(item.mangaId),
+    normalizeString(item.chapterId),
+    normalizeString(item.source),
+    normalizeString(item.sourceUrl),
+  ]
+    .filter(Boolean)
+    .join("::");
+}
+
+function getRetryDelayMinutes(attempts: number) {
+  if (attempts <= 1) return 5;
+  if (attempts === 2) return 10;
+  if (attempts === 3) return 20;
+  if (attempts === 4) return 30;
+  return 60;
+}
+
+function normalizeQueueDoc(id: string, data: Record<string, any>): OperatorQueueItem {
+  return {
+    id,
+    type: normalizeTaskType(data.type),
+    status: normalizeStatus(data.status),
+    priority: normalizePriority(data.priority),
+    dedupeKey: normalizeString(data.dedupeKey),
+    title: normalizeString(data.title),
+    description: normalizeString(data.description),
+    mangaId: normalizeString(data.mangaId),
+    chapterId: normalizeString(data.chapterId),
+    source: normalizeString(data.source),
+    sourceUrl: normalizeString(data.sourceUrl),
+    attempts: Math.max(0, Number(data.attempts || 0)),
+    maxAttempts: Math.max(1, Number(data.maxAttempts || 3)),
+    scheduledAt: toDate(data.scheduledAt, nowDate()) || nowDate(),
+    startedAt: toDate(data.startedAt, null),
+    finishedAt: toDate(data.finishedAt, null),
+    lockedBy: normalizeString(data.lockedBy),
+    lockExpiresAt: toDate(data.lockExpiresAt, null),
+    resultSummary: normalizeString(data.resultSummary),
+    lastError: normalizeString(data.lastError),
+    meta: cleanMeta(data.meta),
+    createdAt: toDate(data.createdAt, nowDate()) || nowDate(),
+    updatedAt: toDate(data.updatedAt, nowDate()) || nowDate(),
+    sortScore: Number(data.sortScore || 0),
+  };
+}
+
 export async function enqueueOperatorTask(
   db: Firestore,
   payload: {
@@ -225,12 +375,13 @@ export async function enqueueOperatorTask(
 ) {
   const createdAt = nowDate();
   const scheduledAt = payload.scheduledAt || createdAt;
-  const priority = payload.priority || "normal";
+  const priority = normalizePriority(payload.priority || "normal");
+  const type = normalizeTaskType(payload.type);
 
   const dedupeKey =
     payload.dedupeKey ||
     buildOperatorQueueDedupeKey({
-      type: payload.type,
+      type,
       mangaId: payload.mangaId,
       chapterId: payload.chapterId,
       source: payload.source,
@@ -255,11 +406,11 @@ export async function enqueueOperatorTask(
   }
 
   const doc = await queueCollection(db).add({
-    type: payload.type,
+    type,
     status: "queued",
     priority,
     dedupeKey,
-    title: payload.title || buildDefaultTitle(payload.type, payload),
+    title: payload.title || buildDefaultTitle(type, payload),
     description: payload.description || "",
     mangaId: normalizeString(payload.mangaId),
     chapterId: normalizeString(payload.chapterId),
@@ -274,7 +425,7 @@ export async function enqueueOperatorTask(
     lockExpiresAt: null,
     resultSummary: "",
     lastError: "",
-    meta: cleanMeta(payload.meta),
+    meta: sanitizeMeta(payload.meta),
     sortScore: buildTaskSortScore(priority, createdAt),
     createdAt,
     updatedAt: createdAt,
@@ -286,9 +437,16 @@ export async function enqueueOperatorTask(
     "Nova task adicionada à fila do operador.",
     {
       queueTaskId: doc.id,
-      type: payload.type,
+      type,
       priority,
       dedupeKey,
+      summaryKey: buildTaskSummaryKey({
+        type,
+        mangaId: payload.mangaId,
+        chapterId: payload.chapterId,
+        source: payload.source,
+        sourceUrl: payload.sourceUrl,
+      }),
     }
   );
 
@@ -300,10 +458,10 @@ export async function enqueueOperatorTask(
 }
 
 export async function getOperatorQueueStats(db: Firestore) {
-  const snap = await queueCollection(db).limit(1000).get().catch(() => null);
+  const snap = await queueCollection(db).limit(1500).get().catch(() => null);
 
   const items =
-    snap?.docs.map((doc) => ({ id: doc.id, ...(doc.data() as any) })) || [];
+    snap?.docs.map((doc) => normalizeQueueDoc(doc.id, doc.data() as any)) || [];
 
   return {
     total: items.length,
@@ -323,16 +481,15 @@ export async function listOperatorQueueItems(
 ) {
   const snap = await queueCollection(db)
     .orderBy("updatedAt", "desc")
-    .limit(Math.max(1, Math.min(200, Number(filters?.limit || 50))))
+    .limit(Math.max(1, Math.min(300, Number(filters?.limit || 50))))
     .get()
     .catch(() => null);
 
   if (!snap) return [];
 
-  let items = snap.docs.map((doc) => ({
-    id: doc.id,
-    ...(doc.data() as any),
-  }));
+  let items = snap.docs.map((doc) =>
+    normalizeQueueDoc(doc.id, doc.data() as any)
+  );
 
   if (filters?.status && filters.status !== "all") {
     items = items.filter((item) => item.status === filters.status);
@@ -355,7 +512,7 @@ export async function reclaimStaleOperatorTasks(
 ) {
   const snap = await queueCollection(db)
     .where("status", "==", "running")
-    .limit(100)
+    .limit(150)
     .get()
     .catch(() => null);
 
@@ -387,7 +544,7 @@ export async function reclaimStaleOperatorTasks(
         updatedAt: now,
         lastError: `Task recuperada por stale lock via ${workerId}.`,
         sortScore: buildTaskSortScore(
-          (data.priority as OperatorQueuePriority) || "normal",
+          normalizePriority(data.priority || "normal"),
           now
         ),
       },
@@ -431,14 +588,14 @@ export async function pullNextOperatorTask(
     .where("status", "==", "queued")
     .orderBy("sortScore", "desc")
     .orderBy("scheduledAt", "asc")
-    .limit(25)
+    .limit(40)
     .get()
     .catch(() => null);
 
   if (!snap || snap.empty) return null;
 
   for (const doc of snap.docs) {
-    const data = doc.data() as Record<string, any>;
+    const data = normalizeQueueDoc(doc.id, doc.data() as any);
     const scheduledAt = toDate(data.scheduledAt, now) || now;
 
     if (scheduledAt.getTime() > now.getTime()) {
@@ -458,15 +615,14 @@ export async function pullNextOperatorTask(
     );
 
     return {
-      id: doc.id,
-      ...(data as any),
+      ...data,
       status: "running",
       lockedBy: workerId,
       lockExpiresAt,
       startedAt: now,
       updatedAt: now,
       attempts: Number(data.attempts || 0) + 1,
-    } as OperatorQueueItem;
+    };
   }
 
   return null;
@@ -500,8 +656,8 @@ export async function finishOperatorTask(
       resultSummary: normalizeString(payload.resultSummary),
       lastError: normalizeString(payload.lastError),
       meta: {
-        ...currentMeta,
-        ...(payload.metaPatch || {}),
+        ...sanitizeMeta(currentMeta),
+        ...sanitizeMeta(payload.metaPatch),
       },
     },
     { merge: true }
@@ -533,8 +689,6 @@ export async function requeueOperatorTask(
   }
 ) {
   const now = nowDate();
-  const delayMinutes = Math.max(1, Number(payload?.delayMinutes || 5));
-  const scheduledAt = new Date(now.getTime() + delayMinutes * 60 * 1000);
 
   const ref = queueCollection(db).doc(taskId);
   const snap = await ref.get().catch(() => null);
@@ -543,11 +697,18 @@ export async function requeueOperatorTask(
     return { ok: false as const, error: "Task não encontrada." };
   }
 
-  const data = snap.data() || {};
+  const data = normalizeQueueDoc(taskId, snap.data() || {});
+  const attempts = Math.max(1, data.attempts || 1);
+
+  const delayMinutes =
+    typeof payload?.delayMinutes === "number" && payload.delayMinutes > 0
+      ? payload.delayMinutes
+      : getRetryDelayMinutes(attempts);
+
+  const scheduledAt = new Date(now.getTime() + delayMinutes * 60 * 1000);
+
   const priority =
-    (payload?.priority as OperatorQueuePriority) ||
-    (data.priority as OperatorQueuePriority) ||
-    "normal";
+    normalizePriority(payload?.priority || data.priority || "normal");
 
   await ref.set(
     {
@@ -573,6 +734,7 @@ export async function requeueOperatorTask(
       queueTaskId: taskId,
       delayMinutes,
       priority,
+      attempts,
       reason: payload?.reason || "",
     }
   );
@@ -581,6 +743,77 @@ export async function requeueOperatorTask(
     ok: true as const,
     taskId,
     scheduledAt,
+  };
+}
+
+export async function removeFinishedQueueNoise(
+  db: Firestore,
+  options?: {
+    keepLatest?: number;
+    maxAgeDays?: number;
+  }
+) {
+  const keepLatest = Math.max(50, Number(options?.keepLatest || 250));
+  const maxAgeDays = Math.max(3, Number(options?.maxAgeDays || 14));
+  const cutoff = new Date(nowDate().getTime() - maxAgeDays * 24 * 60 * 60 * 1000);
+
+  const snap = await queueCollection(db)
+    .orderBy("updatedAt", "desc")
+    .limit(1000)
+    .get()
+    .catch(() => null);
+
+  if (!snap || snap.empty) {
+    return {
+      ok: true,
+      deleted: 0,
+    };
+  }
+
+  const finished = snap.docs
+    .map((doc) => normalizeQueueDoc(doc.id, doc.data() as any))
+    .filter(
+      (item) =>
+        item.status === "success" ||
+        item.status === "warning" ||
+        item.status === "error" ||
+        item.status === "canceled"
+    );
+
+  const deletable = finished
+    .slice(keepLatest)
+    .filter((item) => {
+      const updatedAt = toDate(item.updatedAt, null);
+      return !!updatedAt && updatedAt.getTime() < cutoff.getTime();
+    });
+
+  if (deletable.length === 0) {
+    return {
+      ok: true,
+      deleted: 0,
+    };
+  }
+
+  const batch = db.batch();
+  for (const item of deletable.slice(0, 400)) {
+    batch.delete(queueCollection(db).doc(item.id!));
+  }
+  await batch.commit();
+
+  await registerQueueAction(
+    db,
+    "success",
+    "Limpeza automática de itens antigos da fila concluída.",
+    {
+      deleted: Math.min(deletable.length, 400),
+      keepLatest,
+      maxAgeDays,
+    }
+  );
+
+  return {
+    ok: true,
+    deleted: Math.min(deletable.length, 400),
   };
 }
 
@@ -611,7 +844,7 @@ export async function seedOperatorQueueFromMetrics(
       },
     });
 
-    if (result.created) created.push(result.id);
+    if (result.created && result.id) created.push(result.id);
   }
 
   if ((metrics.sourcesCritical || 0) > 0) {
@@ -619,9 +852,9 @@ export async function seedOperatorQueueFromMetrics(
       type: "source-health-check",
       priority: "critical",
       dedupeKey: "seed::source-health-check::critical",
-      title: "Revisão automática de fontes críticas",
+      title: "Revisão imediata de fontes críticas",
       description:
-        "Métricas indicaram fontes críticas e exigem recalcular saúde/aprendizado.",
+        "Existem fontes críticas afetando discovery/importação.",
       maxAttempts: 3,
       meta: {
         sourcesCritical: metrics.sourcesCritical || 0,
@@ -629,7 +862,7 @@ export async function seedOperatorQueueFromMetrics(
       },
     });
 
-    if (result.created) created.push(result.id);
+    if (result.created && result.id) created.push(result.id);
   }
 
   if (
@@ -640,9 +873,9 @@ export async function seedOperatorQueueFromMetrics(
       type: "operator-maintenance",
       priority: "high",
       dedupeKey: "seed::operator-maintenance::stalled-import",
-      title: "Investigar automação sem progresso",
+      title: "Investigar automação sem importação recente",
       description:
-        "Auto sync ativo sem importações recentes nas últimas 24h.",
+        "Auto sync ativo, porém sem capítulos importados nas últimas 24h.",
       maxAttempts: 3,
       meta: {
         autoSyncActive: metrics.autoSyncActive || 0,
@@ -650,12 +883,29 @@ export async function seedOperatorQueueFromMetrics(
       },
     });
 
-    if (result.created) created.push(result.id);
+    if (result.created && result.id) created.push(result.id);
+  }
+
+  if ((metrics.sourcesWarning || 0) >= 3) {
+    const result = await enqueueOperatorTask(db, {
+      type: "source-health-check",
+      priority: "high",
+      dedupeKey: "seed::source-health-check::warning-burst",
+      title: "Revisão preventiva de fontes em alerta",
+      description:
+        "Múltiplas fontes em warning exigem recalcular saúde e prioridades.",
+      maxAttempts: 2,
+      meta: {
+        sourcesWarning: metrics.sourcesWarning || 0,
+      },
+    });
+
+    if (result.created && result.id) created.push(result.id);
   }
 
   return {
     ok: true,
     createdCount: created.length,
-    ids: created,
+    created,
   };
 }

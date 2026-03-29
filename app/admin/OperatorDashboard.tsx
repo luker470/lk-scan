@@ -14,6 +14,77 @@ type QueueStats = {
   high: number;
 };
 
+type MemoryInsights = {
+  updatedAt?: string;
+  systemMemoryHealth?: "healthy" | "warning" | "critical";
+  autonomyMode?: string;
+  autonomyConfidence?: number;
+  executionSuccessRate?: number;
+  topRecurringProblems?: Array<{
+    key: string;
+    title: string;
+    count: number;
+    severity?: string;
+    type?: string;
+  }>;
+  topTrustedSources?: Array<{
+    host: string;
+    trustScore: number;
+    health: string;
+    successRate: number;
+    errorRate: number;
+  }>;
+  topRiskSources?: Array<{
+    host: string;
+    trustScore: number;
+    health: string;
+    successRate: number;
+    errorRate: number;
+    recentFailures?: number;
+  }>;
+  latestEvents?: Array<{
+    id: string;
+    type: string;
+    success: boolean;
+    impactScore: number;
+    title?: string;
+    summary?: string;
+    createdAt?: any;
+  }>;
+  proposalMemory?: {
+    totalGenerated: number;
+    totalApproved: number;
+    totalRejected: number;
+    totalApplied: number;
+  };
+  approvalMemory?: {
+    approved: number;
+    rejected: number;
+    lastApprovedTitle?: string;
+    lastRejectedTitle?: string;
+  };
+  executionMemory?: {
+    totalRuns: number;
+    successfulRuns: number;
+    failedRuns: number;
+    totalRecoveredChapters: number;
+    totalFailedRecoveries: number;
+    totalQueueProcessed: number;
+    avgCycleDurationMs: number;
+    lastSuccessfulRunAt?: string;
+    lastFailedRunAt?: string;
+    lastRunDurationMs?: number;
+  };
+  counters?: {
+    totalIncidentsSeen: number;
+    totalCommentsProcessed: number;
+    totalIdeasGenerated: number;
+    totalKnowledgeItemsLearned: number;
+    totalSourcesTracked: number;
+    totalMemoryEvents: number;
+  };
+};
+
 type OperatorStatusResponse = {
   ok: boolean;
   generatedAt: string;
@@ -76,6 +147,8 @@ type OperatorStatusResponse = {
     priority?: string;
     updatedAt?: any;
   }>;
+  memoryInsights?: MemoryInsights | null;
+  recommendations?: string[];
   center?: {
     summary?: {
       totalMangas: number;
@@ -108,7 +181,7 @@ type OperatorStatusResponse = {
   };
 };
 
-type Tone = "cyan" | "emerald" | "yellow" | "red" | "zinc";
+type Tone = "cyan" | "emerald" | "yellow" | "red" | "zinc" | "purple";
 
 function healthClass(health?: string) {
   if (health === "healthy") {
@@ -125,6 +198,7 @@ function toneValueClass(tone: Tone) {
   if (tone === "yellow") return "text-yellow-300";
   if (tone === "red") return "text-red-300";
   if (tone === "zinc") return "text-zinc-100";
+  if (tone === "purple") return "text-purple-300";
   return "text-cyan-300";
 }
 
@@ -132,6 +206,7 @@ function cardBorderClass(tone: Tone) {
   if (tone === "emerald") return "border-emerald-500/20";
   if (tone === "yellow") return "border-yellow-500/20";
   if (tone === "red") return "border-red-500/20";
+  if (tone === "purple") return "border-purple-500/20";
   if (tone === "zinc") return "border-zinc-700";
   return "border-cyan-500/20";
 }
@@ -216,6 +291,22 @@ function SourceBar({ score }: { score: number }) {
         style={{ width: `${safe}%` }}
       />
     </div>
+  );
+}
+
+function SmallBadge({
+  children,
+  className = "",
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <span
+      className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${className}`}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -349,6 +440,7 @@ export default function OperatorDashboard() {
     high: 0,
   };
   const queuePreview = data?.queuePreview || [];
+  const memoryInsights = data?.memoryInsights || null;
   const automationNot100 = !!centerSummary?.automationNot100;
 
   const summary = useMemo(() => {
@@ -380,12 +472,12 @@ export default function OperatorDashboard() {
   }, [data, metrics, centerSummary?.unresolvedIncidents, queue.queued]);
 
   const topSources = useMemo(() => {
-  const learning = Array.isArray(data?.learning) ? data.learning : [];
+    const learning = Array.isArray(data?.learning) ? data.learning : [];
 
-  return [...learning]
-    .sort((a, b) => Number(b?.score || 0) - Number(a?.score || 0))
-    .slice(0, 8);
-}, [data]);
+    return [...learning]
+      .sort((a, b) => Number(b?.score || 0) - Number(a?.score || 0))
+      .slice(0, 8);
+  }, [data]);
 
   const priorities = useMemo(() => {
     if (!metrics || !centerSummary) return [];
@@ -410,7 +502,7 @@ export default function OperatorDashboard() {
       );
     }
 
-    if (centerSummary.unresolvedIncidents > 0) {
+    if ((centerSummary.unresolvedIncidents || 0) > 0) {
       list.push(
         `Baixar os ${centerSummary.unresolvedIncidents} incidente(s) em aberto para estabilizar a operação.`
       );
@@ -422,12 +514,27 @@ export default function OperatorDashboard() {
       );
     }
 
-    if (list.length === 0) {
-      list.push("Operação estável. Foco em manutenção preventiva, escala e expansão do catálogo.");
+    if (memoryInsights?.topRiskSources?.length) {
+      list.push(
+        `Observar ${memoryInsights.topRiskSources.length} fonte(s) com risco elevado segundo a memória operacional.`
+      );
     }
 
-    return list.slice(0, 5);
-  }, [metrics, centerSummary, queue, automationNot100]);
+    if (list.length === 0) {
+      list.push(
+        "Operação estável. Foco em manutenção preventiva, escala e expansão do catálogo."
+      );
+    }
+
+    return list.slice(0, 6);
+  }, [metrics, centerSummary, queue, automationNot100, memoryInsights]);
+
+  const memoryHealthTone: Tone = useMemo(() => {
+    if (memoryInsights?.systemMemoryHealth === "critical") return "red";
+    if (memoryInsights?.systemMemoryHealth === "warning") return "yellow";
+    if (memoryInsights?.systemMemoryHealth === "healthy") return "emerald";
+    return "zinc";
+  }, [memoryInsights]);
 
   return (
     <section className="space-y-5 rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
@@ -436,7 +543,7 @@ export default function OperatorDashboard() {
           <h2 className="text-xl font-bold text-cyan-400">🧠 LK AI Operator</h2>
           <p className="text-sm text-zinc-400">
             Centro operacional unificado: saúde, incidentes, fontes, fila,
-            relatórios, automação e prioridade do catálogo.
+            relatórios, memória, autonomia e prioridades reais do catálogo.
           </p>
         </div>
 
@@ -487,7 +594,7 @@ export default function OperatorDashboard() {
             ⚠ Automação ainda não está 100%
           </div>
           <div className="mt-2 text-sm leading-6 text-yellow-100/90">
-            O sistema automático de descoberta, identificação, importação, validação
+            O sistema automático de discovery, identificação, importação, validação
             e correção de mangás/capítulos ainda está evoluindo. O Operator já
             monitora, enfileira e executa parte desse fluxo automaticamente.
           </div>
@@ -522,6 +629,12 @@ export default function OperatorDashboard() {
                 <span className="rounded-full border border-zinc-700 px-3 py-1 text-xs font-semibold text-zinc-300">
                   atualizado: {formatAnyDate(data.generatedAt)}
                 </span>
+
+                {memoryInsights?.autonomyMode ? (
+                  <span className="rounded-full border border-purple-500/30 bg-purple-500/10 px-3 py-1 text-xs font-semibold text-purple-300">
+                    autonomia: {memoryInsights.autonomyMode}
+                  </span>
+                ) : null}
               </div>
 
               <div className="mt-4">
@@ -553,6 +666,19 @@ export default function OperatorDashboard() {
               {centerOperator?.lastRunReportSummary ? (
                 <div className="mt-4 rounded-xl border border-cyan-900 bg-cyan-500/5 p-3 text-sm text-cyan-200">
                   <b>Resumo do último ciclo:</b> {centerOperator.lastRunReportSummary}
+                </div>
+              ) : null}
+
+              {Array.isArray(data.recommendations) && data.recommendations.length > 0 ? (
+                <div className="mt-4 rounded-xl border border-zinc-800 bg-zinc-950/50 p-3">
+                  <div className="mb-2 text-xs font-bold text-zinc-400">
+                    Recomendações do núcleo
+                  </div>
+                  <div className="space-y-2 text-sm text-zinc-200">
+                    {data.recommendations.slice(0, 4).map((item, index) => (
+                      <div key={`${index}-${item}`}>• {item}</div>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -609,6 +735,41 @@ export default function OperatorDashboard() {
             <StatCard label="Views semana" value={metrics.weekViews.toLocaleString()} />
             <StatCard label="Views mês" value={metrics.monthViews.toLocaleString()} />
             <StatCard label="Tasks fila" value={queue.total} tone="cyan" />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-4">
+            <StatCard
+              label="Saúde da memória"
+              value={memoryInsights?.systemMemoryHealth || "—"}
+              tone={memoryHealthTone}
+              helper="Leitura histórica do comportamento do operador"
+            />
+            <StatCard
+              label="Confiança da autonomia"
+              value={
+                typeof memoryInsights?.autonomyConfidence === "number"
+                  ? `${memoryInsights.autonomyConfidence}%`
+                  : "—"
+              }
+              tone="purple"
+              helper={`Modo: ${memoryInsights?.autonomyMode || "—"}`}
+            />
+            <StatCard
+              label="Sucesso das execuções"
+              value={
+                typeof memoryInsights?.executionSuccessRate === "number"
+                  ? `${memoryInsights.executionSuccessRate}%`
+                  : "—"
+              }
+              tone="emerald"
+              helper="Taxa histórica de sucesso do operador"
+            />
+            <StatCard
+              label="Eventos de memória"
+              value={memoryInsights?.counters?.totalMemoryEvents ?? "—"}
+              tone="zinc"
+              helper="Aprendizados e registros acumulados"
+            />
           </div>
 
           <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
@@ -706,59 +867,171 @@ export default function OperatorDashboard() {
             </div>
 
             <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
-              <h3 className="mb-3 font-bold text-cyan-300">📝 Últimos relatórios</h3>
+              <h3 className="mb-3 font-bold text-cyan-300">🧠 Memória e autonomia</h3>
 
               <div className="space-y-3">
-                {!data.latestReports?.length ? (
-                  <div className="text-sm text-zinc-500">Sem relatórios recentes.</div>
-                ) : (
-                  data.latestReports.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
-                    >
-                      <div className="font-semibold text-zinc-200">
-                        {compactText(item.summary, 180)}
-                      </div>
-                      <div className="mt-2 text-sm text-zinc-500">
-                        {formatAnyDate(item.generatedAt)}
-                      </div>
-                    </div>
-                  ))
-                )}
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200">
+                  <div className="text-xs text-zinc-500">Modo atual</div>
+                  <div className="mt-1 font-semibold text-purple-300">
+                    {memoryInsights?.autonomyMode || "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200">
+                  <div className="text-xs text-zinc-500">Confiança</div>
+                  <div className="mt-1 font-semibold text-cyan-300">
+                    {typeof memoryInsights?.autonomyConfidence === "number"
+                      ? `${memoryInsights.autonomyConfidence}%`
+                      : "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200">
+                  <div className="text-xs text-zinc-500">Ideias geradas</div>
+                  <div className="mt-1 font-semibold text-zinc-100">
+                    {memoryInsights?.proposalMemory?.totalGenerated ?? 0}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200">
+                  <div className="text-xs text-zinc-500">Aprovações</div>
+                  <div className="mt-1 font-semibold text-emerald-300">
+                    {memoryInsights?.approvalMemory?.approved ?? 0}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 text-sm text-zinc-200">
+                  <div className="text-xs text-zinc-500">Rejeições</div>
+                  <div className="mt-1 font-semibold text-red-300">
+                    {memoryInsights?.approvalMemory?.rejected ?? 0}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
+          {memoryInsights?.topRecurringProblems?.length ? (
+            <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
+              <h3 className="mb-3 font-bold text-cyan-300">♻️ Problemas recorrentes</h3>
+              <div className="grid gap-3 xl:grid-cols-2">
+                {memoryInsights.topRecurringProblems.map((item) => (
+                  <div
+                    key={item.key}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold text-zinc-100">{item.title}</div>
+                        <div className="mt-1 text-xs text-zinc-500">
+                          tipo: {item.type || "—"}
+                        </div>
+                      </div>
+                      <SmallBadge className={severityClass(item.severity)}>
+                        {item.severity || "info"}
+                      </SmallBadge>
+                    </div>
+                    <div className="mt-3 text-sm text-zinc-300">
+                      recorrência: <b>{item.count}</b>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {memoryInsights?.topRiskSources?.length ? (
+            <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
+              <h3 className="mb-3 font-bold text-cyan-300">🚨 Fontes de risco</h3>
+              <div className="grid gap-3 xl:grid-cols-2">
+                {memoryInsights.topRiskSources.map((item) => (
+                  <div
+                    key={item.host}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="font-semibold text-zinc-100">{item.host}</div>
+                      <SmallBadge className={healthClass(item.health)}>
+                        {item.health}
+                      </SmallBadge>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-3 text-sm text-zinc-400">
+                      <span>trust: {item.trustScore}</span>
+                      <span>sucesso: {item.successRate}%</span>
+                      <span>erro: {item.errorRate}%</span>
+                      <span>falhas recentes: {item.recentFailures ?? 0}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {Array.isArray(memoryInsights?.latestEvents) &&
+          memoryInsights.latestEvents.length > 0 ? (
+            <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
+              <h3 className="mb-3 font-bold text-cyan-300">📝 Últimos eventos de memória</h3>
+              <div className="space-y-3">
+                {memoryInsights.latestEvents.slice(0, 8).map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-semibold text-zinc-100">
+                        {item.title || item.type || "Evento"}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <SmallBadge
+                          className={
+                            item.success
+                              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                              : "border-red-500/30 bg-red-500/10 text-red-300"
+                          }
+                        >
+                          {item.success ? "success" : "fail"}
+                        </SmallBadge>
+                        <SmallBadge className="border-zinc-700 bg-zinc-800/60 text-zinc-300">
+                          impacto {item.impactScore}
+                        </SmallBadge>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-zinc-300">
+                      {compactText(item.summary, 220)}
+                    </div>
+                    <div className="mt-2 text-xs text-zinc-500">
+                      {formatAnyDate(item.createdAt)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="grid gap-6 xl:grid-cols-2">
             <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
               <h3 className="mb-3 font-bold text-cyan-300">🚨 Incidentes recentes</h3>
-
               <div className="space-y-3">
                 {data.latestIncidents.length === 0 ? (
                   <div className="text-sm text-zinc-500">Sem incidentes recentes.</div>
                 ) : (
-                  data.latestIncidents.map((item) => (
+                  data.latestIncidents.slice(0, 8).map((item) => (
                     <div
                       key={item.id}
                       className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="font-semibold text-zinc-200">
-                          {compactText(item.title, 180)}
+                        <div>
+                          <div className="font-semibold text-zinc-100">
+                            {item.title}
+                          </div>
+                          <div className="mt-1 text-xs text-zinc-500">
+                            {item.type} • {formatAnyDate(item.createdAt)}
+                          </div>
                         </div>
-                        <span
-                          className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${severityClass(
-                            item.severity
-                          )}`}
-                        >
+                        <SmallBadge className={severityClass(item.severity)}>
                           {item.severity}
-                        </span>
-                      </div>
-
-                      <div className="mt-2 text-sm text-zinc-500">
-                        {item.type} • {item.resolved ? "resolvido" : "aberto"}
-                        {item.createdAt ? ` • ${formatAnyDate(item.createdAt)}` : ""}
+                        </SmallBadge>
                       </div>
                     </div>
                   ))
@@ -768,44 +1041,57 @@ export default function OperatorDashboard() {
 
             <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
               <h3 className="mb-3 font-bold text-cyan-300">📌 Ações recentes</h3>
-
               <div className="space-y-3">
                 {data.latestActions.length === 0 ? (
-                  <div className="text-sm text-zinc-500">
-                    Sem ações registradas ainda.
-                  </div>
+                  <div className="text-sm text-zinc-500">Sem ações recentes.</div>
                 ) : (
-                  data.latestActions.map((item) => (
+                  data.latestActions.slice(0, 8).map((item) => (
                     <div
                       key={item.id}
                       className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div className="font-semibold text-zinc-200">{item.type}</div>
-                        <span
-                          className={`rounded-full border px-2 py-1 text-[11px] font-semibold ${actionStatusClass(
-                            item.status
-                          )}`}
-                        >
-                          {item.status}
-                        </span>
-                      </div>
-
-                      <div className="mt-2 text-sm text-zinc-400">
-                        {compactText(item.message, 180)}
-                      </div>
-
-                      {item.createdAt ? (
-                        <div className="mt-2 text-[11px] text-zinc-600">
-                          {formatAnyDate(item.createdAt)}
+                        <div>
+                          <div className="font-semibold text-zinc-100">
+                            {item.message}
+                          </div>
+                          <div className="mt-1 text-xs text-zinc-500">
+                            {item.type} • {formatAnyDate(item.createdAt)}
+                          </div>
                         </div>
-                      ) : null}
+                        <SmallBadge className={actionStatusClass(item.status)}>
+                          {item.status}
+                        </SmallBadge>
+                      </div>
                     </div>
                   ))
                 )}
               </div>
             </div>
           </div>
+
+          {Array.isArray(data.latestReports) && data.latestReports.length > 0 ? (
+            <div className="rounded-2xl border border-zinc-800 bg-black/20 p-4">
+              <h3 className="mb-3 font-bold text-cyan-300">📄 Últimos relatórios</h3>
+              <div className="space-y-3">
+                {data.latestReports.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="text-sm text-zinc-200">
+                        {compactText(item.summary, 260)}
+                      </div>
+                      <div className="text-xs text-zinc-500 whitespace-nowrap">
+                        {formatAnyDate(item.generatedAt)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </>
       )}
     </section>

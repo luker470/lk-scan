@@ -23,12 +23,11 @@ import BackupManager from "./BackupManager";
 import ParserDiagnosticsBoard from "./ParserDiagnosticsBoard";
 import ProductionBoard from "./ProductionBoard";
 import AICommentCenter from "./AICommentCenter";
-import OperatorChat from "./OperatorChat";
 import OperatorDashboard from "./OperatorDashboard";
 import OperatorIncidentsBoard from "./OperatorIncidentsBoard";
 import OperatorReportsBoard from "./OperatorReportsBoard";
 import OperatorChatPanel from "./OperatorChatPanel";
-import OperatorFloatingChat from "@/components/OperatorFloatingChat";
+import OperatorIdeasStudio from "./OperatorIdeasStudio";
 
 import MangaList from "./MangaList";
 import ImportChapterLinks from "./chapters/ImportChapterLinks";
@@ -99,6 +98,12 @@ function tsSeconds(v: any) {
   return v?.seconds ?? v?._seconds ?? 0;
 }
 
+function compactText(value: unknown, max = 120) {
+  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
+}
+
 function TabButton({
   active,
   onClick,
@@ -133,7 +138,7 @@ function StatCard({
   value: string | number;
   loading?: boolean;
   hint?: string;
-  tone?: "cyan" | "emerald" | "yellow" | "red" | "zinc";
+  tone?: "cyan" | "emerald" | "yellow" | "red" | "zinc" | "purple";
 }) {
   const valueClass =
     tone === "emerald"
@@ -142,6 +147,8 @@ function StatCard({
       ? "text-yellow-300"
       : tone === "red"
       ? "text-red-300"
+      : tone === "purple"
+      ? "text-purple-300"
       : tone === "zinc"
       ? "text-zinc-100"
       : "text-cyan-400";
@@ -166,13 +173,15 @@ function QuickActionButton({
   title: string;
   subtitle?: string;
   onClick: () => void;
-  tone?: "default" | "primary" | "operator";
+  tone?: "default" | "primary" | "operator" | "danger";
 }) {
   const cls =
     tone === "primary"
       ? "border-cyan-500 bg-cyan-500 text-black hover:bg-cyan-400"
       : tone === "operator"
       ? "border-cyan-700 bg-cyan-500/5 text-cyan-200 hover:bg-cyan-500/10"
+      : tone === "danger"
+      ? "border-red-700 bg-red-500/5 text-red-200 hover:bg-red-500/10"
       : "border-zinc-700 bg-transparent text-zinc-100 hover:border-cyan-400";
 
   return (
@@ -191,19 +200,24 @@ function QuickActionButton({
 function SectionCard({
   title,
   subtitle,
+  right,
   children,
 }: {
   title: string;
   subtitle?: string;
+  right?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5">
-      <div className="mb-4">
-        <h2 className="text-lg font-bold text-cyan-400">{title}</h2>
-        {subtitle ? (
-          <div className="mt-1 text-sm text-zinc-500">{subtitle}</div>
-        ) : null}
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-cyan-400">{title}</h2>
+          {subtitle ? (
+            <div className="mt-1 text-sm text-zinc-500">{subtitle}</div>
+          ) : null}
+        </div>
+        {right}
       </div>
       {children}
     </section>
@@ -280,6 +294,38 @@ export default function AdminPage() {
       tone: "red" as const,
     };
   }, [stats.autoSyncCount]);
+
+  const adminSummary = useMemo(() => {
+    const hasCatalog = stats.totalMangas > 0;
+    const hasChapters = stats.totalChapters > 0;
+    const hasTraffic = stats.totalViews > 0;
+
+    if (!hasCatalog) {
+      return {
+        title: "Base ainda inicial",
+        text: "Cadastre obras e avance para importação e sync para ativar o painel em força total.",
+      };
+    }
+
+    if (hasCatalog && !hasChapters) {
+      return {
+        title: "Catálogo criado, importação pendente",
+        text: "As obras já existem, mas você ainda precisa alimentar capítulos e consolidar o leitor.",
+      };
+    }
+
+    if (hasCatalog && hasChapters && !hasTraffic) {
+      return {
+        title: "Base montada, tráfego ainda inicial",
+        text: "O catálogo já existe; o próximo foco é estabilidade, automação e crescimento de audiência.",
+      };
+    }
+
+    return {
+      title: "Painel em ritmo operacional",
+      text: "O LK-SCAN já tem catálogo, capítulos e sinais de uso. Agora o foco é estabilidade, automação e escala.",
+    };
+  }, [stats]);
 
   function showStatus(
     message: string,
@@ -798,6 +844,14 @@ export default function AdminPage() {
               <SectionCard
                 title="⚡ Ações rápidas"
                 subtitle="Atalhos para fluxo operacional diário"
+                right={
+                  <div className="rounded-xl border border-zinc-800 bg-black/20 px-3 py-2 text-xs text-zinc-400">
+                    estado:{" "}
+                    <span className="font-semibold text-zinc-200">
+                      {operatorReadiness.label}
+                    </span>
+                  </div>
+                }
               >
                 <div className="grid gap-3 sm:grid-cols-2">
                   <QuickActionButton
@@ -828,7 +882,7 @@ export default function AdminPage() {
                   />
                   <QuickActionButton
                     title="Abrir central do Operator"
-                    subtitle="Incidentes, relatórios, chat e IA"
+                    subtitle="Incidentes, relatórios, chat, ideias e IA"
                     onClick={() => setTab("operator")}
                     tone="operator"
                   />
@@ -836,41 +890,45 @@ export default function AdminPage() {
               </SectionCard>
 
               <SectionCard
-                title="🧠 Estado atual"
-                subtitle="Contexto administrativo do painel"
+                title="🧠 Leitura executiva"
+                subtitle="Resumo administrativo do estado atual do projeto"
               >
                 <div className="space-y-3 text-sm">
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
-                    <span className="text-zinc-400">Mangá selecionado: </span>
-                    <span className="text-zinc-200 font-semibold">
+                    <div className="text-xs text-zinc-500">Resumo</div>
+                    <div className="mt-1 font-semibold text-zinc-100">
+                      {adminSummary.title}
+                    </div>
+                    <div className="mt-1 text-zinc-400">{adminSummary.text}</div>
+                  </div>
+
+                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
+                    <div className="text-xs text-zinc-500">Mangá selecionado</div>
+                    <div className="mt-1 font-semibold text-zinc-100">
                       {mangaIdToUse || "nenhum"}
-                    </span>
+                    </div>
                   </div>
 
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
-                    <span className="text-zinc-400">Aba atual: </span>
-                    <span className="text-zinc-200 font-semibold">{tab}</span>
+                    <div className="text-xs text-zinc-500">Aba atual</div>
+                    <div className="mt-1 font-semibold text-zinc-100">{tab}</div>
                   </div>
 
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
-                    <span className="text-zinc-400">Admin logado: </span>
-                    <span className="text-zinc-200 font-semibold break-all">
+                    <div className="text-xs text-zinc-500">Admin logado</div>
+                    <div className="mt-1 font-semibold text-zinc-100 break-all">
                       {adminLabel}
-                    </span>
+                    </div>
                   </div>
 
                   <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
-                    <span className="text-zinc-400">Leitura operacional: </span>
-                    <span className="text-zinc-200 font-semibold">
+                    <div className="text-xs text-zinc-500">Maturidade operacional</div>
+                    <div className="mt-1 font-semibold text-zinc-100">
                       {operatorReadiness.label}
-                    </span>
-                  </div>
-
-                  <div className="rounded-xl bg-black/30 p-3 border border-zinc-800">
-                    <span className="text-zinc-400">Diagnóstico: </span>
-                    <span className="text-zinc-200 font-semibold">
+                    </div>
+                    <div className="mt-1 text-zinc-400">
                       {operatorReadiness.hint}
-                    </span>
+                    </div>
                   </div>
                 </div>
               </SectionCard>
@@ -890,7 +948,7 @@ export default function AdminPage() {
                         key={`${item}-${idx}`}
                         className="rounded-xl border border-zinc-800 bg-black/20 p-3"
                       >
-                        {idx + 1}. {item}
+                        {idx + 1}. {compactText(item, 120)}
                       </div>
                     ))
                   )}
@@ -910,7 +968,7 @@ export default function AdminPage() {
                         key={`${item}-${idx}`}
                         className="rounded-xl border border-zinc-800 bg-black/20 p-3"
                       >
-                        {idx + 1}. {item}
+                        {idx + 1}. {compactText(item, 120)}
                       </div>
                     ))
                   )}
@@ -956,7 +1014,7 @@ export default function AdminPage() {
               </h2>
               <div className="mt-2 text-sm text-zinc-400">
                 Aqui fica a leitura viva do site: saúde, incidentes,
-                relatórios, comentários e conversa operacional.
+                relatórios, memória, comentários, propostas e conversa operacional.
               </div>
             </div>
 
@@ -967,13 +1025,11 @@ export default function AdminPage() {
               <OperatorReportsBoard />
             </div>
 
-            <div className="grid gap-6 xl:grid-cols-2">
-              <OperatorChat />
-              <OperatorChatPanel />
-            </div>
+            <OperatorChatPanel />
 
             <AICommentCenter />
-            <OperatorFloatingChat />
+
+            <OperatorIdeasStudio />
           </section>
         )}
 
@@ -1233,7 +1289,7 @@ export default function AdminPage() {
                   </label>
 
                   <div className="grid gap-4 md:grid-cols-2">
-                    <label className="space-y-1 block">
+                    <label className="space-y-1">
                       <div className="text-sm text-zinc-300">Status</div>
                       <input
                         value={status}
@@ -1242,7 +1298,7 @@ export default function AdminPage() {
                       />
                     </label>
 
-                    <label className="space-y-1 block">
+                    <label className="space-y-1">
                       <div className="text-sm text-zinc-300">Autor</div>
                       <input
                         value={author}
@@ -1251,7 +1307,7 @@ export default function AdminPage() {
                       />
                     </label>
 
-                    <label className="space-y-1 block">
+                    <label className="space-y-1">
                       <div className="text-sm text-zinc-300">Artista</div>
                       <input
                         value={artist}
@@ -1260,7 +1316,7 @@ export default function AdminPage() {
                       />
                     </label>
 
-                    <label className="space-y-1 block">
+                    <label className="space-y-1">
                       <div className="text-sm text-zinc-300">Source URL</div>
                       <input
                         value={sourceUrl}
@@ -1279,25 +1335,21 @@ export default function AdminPage() {
                     Ativar sincronização automática
                   </label>
 
-                  <div className="flex flex-col md:flex-row gap-3">
+                  <div className="flex flex-wrap gap-3">
                     <button
                       onClick={handleEditManga}
                       disabled={actionLoading === "edit"}
-                      className="px-5 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition disabled:opacity-50"
+                      className="px-6 py-3 rounded-xl bg-cyan-500 text-black font-bold hover:bg-cyan-400 transition disabled:opacity-50"
                     >
-                      {actionLoading === "edit"
-                        ? "Salvando..."
-                        : "Salvar alterações"}
+                      {actionLoading === "edit" ? "Salvando..." : "Salvar alterações"}
                     </button>
 
                     <button
                       onClick={handleDeleteManga}
                       disabled={actionLoading === "delete"}
-                      className="px-5 py-3 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition disabled:opacity-50"
+                      className="px-6 py-3 rounded-xl border border-red-700 text-red-200 hover:bg-red-500/10 transition disabled:opacity-50"
                     >
-                      {actionLoading === "delete"
-                        ? "Excluindo..."
-                        : "Excluir mangá"}
+                      {actionLoading === "delete" ? "Excluindo..." : "Excluir mangá"}
                     </button>
                   </div>
                 </>
@@ -1306,45 +1358,34 @@ export default function AdminPage() {
 
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
               <h2 className="text-lg font-bold text-cyan-400 mb-4">
-                📌 Seleção atual
+                📌 Estado da seleção
               </h2>
 
               <div className="space-y-3 text-sm">
-                <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
-                  <span className="text-zinc-400">MangaId:</span>
-                  <div className="break-all text-zinc-200 mt-1">
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-xs text-zinc-500">MangaId</div>
+                  <div className="mt-1 break-all text-zinc-100">
                     {mangaIdToUse || "nenhum"}
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
-                  <span className="text-zinc-400">Prévia capa:</span>
-                  {previewCover ? (
-                    <img
-                      src={previewCover}
-                      alt="Prévia"
-                      className="mt-3 rounded-xl w-full h-56 object-cover"
-                    />
-                  ) : (
-                    <div className="mt-3 rounded-xl w-full h-56 bg-zinc-800 flex items-center justify-center text-zinc-500">
-                      Sem imagem
-                    </div>
-                  )}
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-xs text-zinc-500">Título atual</div>
+                  <div className="mt-1 text-zinc-100">{title || "—"}</div>
                 </div>
 
-                <div className="rounded-xl border border-zinc-800 bg-black/30 p-3">
-                  <span className="text-zinc-400">Prévia banner:</span>
-                  {previewBanner ? (
-                    <img
-                      src={previewBanner}
-                      alt="Banner"
-                      className="mt-3 rounded-xl w-full h-40 object-cover"
-                    />
-                  ) : (
-                    <div className="mt-3 rounded-xl w-full h-40 bg-zinc-800 flex items-center justify-center text-zinc-500">
-                      Sem banner
-                    </div>
-                  )}
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-xs text-zinc-500">Source</div>
+                  <div className="mt-1 break-all text-zinc-100">
+                    {sourceUrl || "—"}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-3">
+                  <div className="text-xs text-zinc-500">Auto sync</div>
+                  <div className="mt-1 text-zinc-100">
+                    {autoSync ? "ativo" : "desativado"}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1352,42 +1393,42 @@ export default function AdminPage() {
         )}
 
         {tab === "importar" && (
-          <>
-            {!hasSelectedManga ? (
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 text-zinc-300">
-                Selecione um mangá primeiro.
-              </div>
-            ) : (
-              <section className="grid gap-6 xl:grid-cols-3">
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
-                    📄 Importar 1 capítulo
-                  </h2>
+          <section className="space-y-6">
+            <SectionCard
+              title="📥 Importação de capítulos"
+              subtitle="Use o mangá selecionado para importar links, lotes ou por URL."
+              right={
+                <div className="rounded-xl border border-zinc-800 bg-black/20 px-3 py-2 text-xs text-zinc-400">
+                  manga atual:{" "}
+                  <span className="font-semibold text-zinc-200">
+                    {mangaIdToUse || "nenhum"}
+                  </span>
+                </div>
+              }
+            >
+              {!hasSelectedManga ? (
+                <div className="rounded-xl border border-zinc-800 bg-black/20 p-4 text-zinc-400">
+                  Selecione um mangá primeiro para importar capítulos.
+                </div>
+              ) : (
+                <div className="grid gap-6">
                   <ImportChapterLinks mangaId={mangaIdToUse} />
-                </div>
-
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
-                    📚 Importar tudo
-                  </h2>
                   <ImportMangaFull mangaId={mangaIdToUse} />
-                </div>
-
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6">
-                  <h2 className="text-xl font-bold mb-4 text-cyan-400">
-                    ⚡ Importação automática
-                  </h2>
                   <ImportAutoFromUrl mangaId={mangaIdToUse} />
                 </div>
-              </section>
-            )}
-          </>
+              )}
+            </SectionCard>
+          </section>
         )}
 
         {tab === "descobrir" && (
           <section className="space-y-6">
-            <DiscoveryManager />
-            <OperatorFloatingChat />
+            <SectionCard
+              title="🔎 Discovery"
+              subtitle="Descoberta automática de novas obras e expansão do catálogo."
+            >
+              <DiscoveryManager />
+            </SectionCard>
           </section>
         )}
       </div>
